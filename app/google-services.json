@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1090829289754",
+    "project_id": "sketchly-44c83",
+    "storage_bucket": "sketchly-44c83.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1090829289754:android:fe459984b94852253644a3",
+        "android_client_info": {
+          "package_name": "com.jrprofessor.sketchly"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDmHIXaPP3g8spY6qeEnPIFxZpyENCurUE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

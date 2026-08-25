@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Sketchly</string>
+    <string name="widget_description">Shows your latest received Sketchly on the Home Screen</string>
+</resources>

@@ -1,0 +1,71 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helper functions ──
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return request.auth.uid == uid;
+    }
+
+    // ── Users ──
+    // Users can read/write only their own profile document.
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && isOwner(userId);
+    }
+
+    // ── Scribbles (SRS §7) ──
+    // A user can read a Scribble if they are the sender OR a recipient.
+    // A user can only create a Scribble where senderId matches their UID.
+    // Scribbles cannot be edited after creation (BR-1).
+    match /scribbles/{scribbleId} {
+      allow read: if isSignedIn() &&
+        (request.auth.uid == resource.data.senderId ||
+         request.auth.uid in resource.data.recipientIds);
+
+      allow create: if isSignedIn() &&
+        request.auth.uid == request.resource.data.senderId &&
+        request.resource.data.recipientIds.size() > 0 &&
+        request.resource.data.recipientIds.size() <= 10; // SRS BR-3
+
+      // No update/delete for sent Scribbles in MVP (BR-1, BR-2 handled app-side)
+      allow update, delete: if false;
+    }
+
+    // ── Reactions (SRS §7, FR-7) ──
+    // Document ID convention: "{scribbleId}_{userId}" — enforces one-per-user.
+    // A user can only write their own reaction.
+    // Read: reactor (own reaction) or the Scribble's sender (to see reactions).
+    match /reactions/{reactionId} {
+      allow read: if isSignedIn() &&
+        (request.auth.uid == resource.data.userId ||
+         request.auth.uid ==
+           get(/databases/$(database)/documents/scribbles/$(resource.data.scribbleId)).data.senderId);
+
+      allow create, update: if isSignedIn() &&
+        request.auth.uid == request.resource.data.userId &&
+        request.resource.data.emoji is string &&
+        request.resource.data.emoji.size() > 0;
+
+      allow delete: if isSignedIn() &&
+        request.auth.uid == resource.data.userId;
+    }
+
+    // ── Contact Relationships ──
+    // Users can only read/write their own contact entries.
+    match /contacts/{userId}/relationships/{contactId} {
+      allow read, write: if isSignedIn() && isOwner(userId);
+    }
+
+    // Deny everything else by default.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
