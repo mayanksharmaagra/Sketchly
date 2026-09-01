@@ -4,8 +4,14 @@ package com.jrprofessor.sketchly.ui.navigation
  * Sealed hierarchy of all app screens / routes.
  */
 sealed class Screen(val route: String) {
+    /** Get Started Screen */
+    data object GetStarted : Screen("getStarted")
+
     /** Auth — sign-in and sign-up */
     data object Auth : Screen("auth")
+
+    /** Contact permission gate — shown once after new account creation */
+    data object ContactPermission : Screen("contact_permission")
 
     /** Inbox — received Sketches feed */
     data object Inbox : Screen("inbox")

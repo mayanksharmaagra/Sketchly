@@ -83,3 +83,14 @@ val InkDefault = Color(0xFF2D2D2D)
 
 /** Subtle border for paper elements */
 val PaperBorder = Color(0x0D3D405B) // 5% opacity deep charcoal
+
+
+/** new colors*/
+val BgColor= Color(0xFFEFE8D6)
+val AppNameColor= Color(0xFF34293F)
+val TextMuted= Color(0xFF8A7F6C)
+
+val TextColor= Color(0xFF2A2420)
+val ButtonGold= Color(0xFFC99A3C)
+val TextEditorBorderColor= Color(0xFFD9CEAF)
+val TextEditorBgColor= Color(0xFFF7F2E4)

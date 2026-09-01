@@ -1,8 +1,22 @@
 const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const { onDocumentWritten } = require("firebase-functions/v2/firestore");
+const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { initializeApp } = require("firebase-admin/app");
-const { getFirestore } = require("firebase-admin/firestore");
+const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const { getMessaging } = require("firebase-admin/messaging");
+const nodemailer = require("nodemailer");
+const crypto = require("crypto");
+
+// ── Email transporter (configure via Firebase Functions config or env vars) ──
+// Set these using: firebase functions:secrets:set SMTP_USER / SMTP_PASS
+// Or use a service like SendGrid / Resend instead of Gmail.
+const createTransporter = () => nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.SMTP_USER,   // e.g. sketchly.noreply@gmail.com
+    pass: process.env.SMTP_PASS,   // App Password (not account password)
+  },
+});
 
 initializeApp();
 
@@ -187,5 +201,149 @@ exports.onReactionCreate = onDocumentWritten(
     } catch (err) {
       console.error("onReactionCreate: failed to send reaction FCM:", err);
     }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// sendEmailOtp — generate and email a 6-digit OTP
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Callable: sendEmailOtp({ email })
+ *
+ * 1. Generates a cryptographically random 6-digit OTP.
+ * 2. Hashes it with SHA-256 and stores { hash, expiresAt } in
+ *    Firestore under `emailOtps/{email}`.
+ * 3. Sends the plaintext OTP to the user's email via nodemailer.
+ *
+ * Rate limit: prevents re-sending if a non-expired OTP already exists
+ * (client should wait for countdown to finish before calling resend).
+ */
+exports.sendEmailOtp = onCall(
+  { region: "us-central1", enforceAppCheck: false },
+  async (request) => {
+    const email = request.data?.email;
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new HttpsError("invalid-argument", "A valid email address is required.");
+    }
+
+    const db = getFirestore();
+    const otpRef = db.collection("emailOtps").doc(email);
+
+    // Check for a still-valid OTP (optional rate-limiting)
+    const existing = await otpRef.get();
+    if (existing.exists) {
+      const { expiresAt } = existing.data();
+      if (expiresAt && expiresAt.toMillis() > Date.now()) {
+        // OTP still valid — don't spam. Client should use resend countdown.
+        console.log(`sendEmailOtp: valid OTP already exists for ${email}, skipping resend.`);
+        return { success: true };
+      }
+    }
+
+    // Generate 6-digit OTP
+    const otp = String(Math.floor(100000 + crypto.randomInt(900000))).padStart(6, "0");
+    const hash = crypto.createHash("sha256").update(otp).digest("hex");
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10-minute TTL
+
+    // Store hashed OTP in Firestore
+    await otpRef.set({
+      hash,
+      expiresAt: FieldValue.serverTimestamp(),
+      expiresAtMs: expiresAt.getTime(),
+      createdAt: FieldValue.serverTimestamp(),
+    });
+
+    // Send email
+    const transporter = createTransporter();
+    await transporter.sendMail({
+      from: `"Sketchly" <${process.env.SMTP_USER}>`,
+      to: email,
+      subject: "Your Sketchly verification code",
+      html: `
+        <div style="font-family: 'Georgia', serif; max-width: 480px; margin: auto; padding: 32px;">
+          <h2 style="color: #34293F; font-style: italic; font-size: 28px; margin-bottom: 8px;">Enter your code</h2>
+          <p style="color: #8A7F6C; font-size: 15px;">Use the code below to verify your Sketchly account.</p>
+          <div style="
+            background: #F7F2E4;
+            border: 1px solid #D9CEAF;
+            border-radius: 16px;
+            padding: 24px;
+            text-align: center;
+            margin: 24px 0;
+          ">
+            <span style="
+              font-size: 40px;
+              font-weight: bold;
+              letter-spacing: 12px;
+              color: #2A2420;
+            ">${otp}</span>
+          </div>
+          <p style="color: #8A7F6C; font-size: 13px;">
+            This code expires in <strong>10 minutes</strong>. If you didn't request this, you can safely ignore this email.
+          </p>
+        </div>
+      `,
+    });
+
+    console.log(`sendEmailOtp: OTP sent to ${email}`);
+    return { success: true };
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// verifyEmailOtp — check the entered OTP against the stored hash
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Callable: verifyEmailOtp({ email, otp })
+ *
+ * 1. Looks up the `emailOtps/{email}` document.
+ * 2. Checks the OTP hasn't expired.
+ * 3. Compares SHA-256(otp) to the stored hash.
+ * 4. On success, deletes the OTP document (one-time use).
+ *
+ * Throws HttpsError on failure so the Android client receives a typed error.
+ */
+exports.verifyEmailOtp = onCall(
+  { region: "us-central1", enforceAppCheck: false },
+  async (request) => {
+    const { email, otp } = request.data ?? {};
+    if (!email || !otp) {
+      throw new HttpsError("invalid-argument", "email and otp are required.");
+    }
+
+    const db = getFirestore();
+    const otpRef = db.collection("emailOtps").doc(email);
+    const doc = await otpRef.get();
+
+    if (!doc.exists) {
+      throw new HttpsError("not-found", "No OTP found for this email. Please request a new code.");
+    }
+
+    const { hash, expiresAtMs } = doc.data();
+
+    // Expiry check
+    if (!expiresAtMs || Date.now() > expiresAtMs) {
+      await otpRef.delete();
+      throw new HttpsError("deadline-exceeded", "This code has expired. Please request a new one.");
+    }
+
+    // Hash comparison (timing-safe)
+    const inputHash = crypto.createHash("sha256").update(String(otp)).digest("hex");
+    const isValid = crypto.timingSafeEqual(
+      Buffer.from(inputHash, "hex"),
+      Buffer.from(hash, "hex"),
+    );
+
+    if (!isValid) {
+      throw new HttpsError("invalid-argument", "Incorrect code. Please try again.");
+    }
+
+    // One-time use: delete OTP document
+    await otpRef.delete();
+
+    console.log(`verifyEmailOtp: OTP verified for ${email}`);
+    return { success: true };
   }
 );

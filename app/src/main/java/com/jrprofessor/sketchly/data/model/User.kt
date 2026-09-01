@@ -9,4 +9,6 @@ data class User(
     val createdAt: Long = System.currentTimeMillis(),
     val widgetPreviewEnabled: Boolean = true,
     val notificationsEnabled: Boolean = true,
+    /** True once the user has completed email OTP verification after sign-up. */
+    val isEmailVerified: Boolean = false,
 )

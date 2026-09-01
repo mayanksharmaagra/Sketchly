@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.work.WorkManager
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.functions.FirebaseFunctions
 import com.jrprofessor.sketchly.data.local.ContactDao
 import com.jrprofessor.sketchly.data.local.SketchlyDao
 import com.jrprofessor.sketchly.data.local.SketchlyDatabase
@@ -30,6 +31,11 @@ object AppModule {
     @Provides
     @Singleton
     fun provideFirebaseFirestore(): FirebaseFirestore = FirebaseFirestore.getInstance()
+
+    @Provides
+    @Singleton
+    fun provideFirebaseFunctions(): FirebaseFunctions =
+        FirebaseFunctions.getInstance("us-central1")
 
     // ── Room Database ─────────────────────────────────────────────────────
 
@@ -60,8 +66,9 @@ object AppModule {
     fun provideAuthRepository(
         auth: FirebaseAuth,
         firestore: FirebaseFirestore,
+        functions: FirebaseFunctions,
         db: SketchlyDatabase,
-    ): AuthRepository = AuthRepository(auth, firestore, db)
+    ): AuthRepository = AuthRepository(auth, firestore, functions, db)
 
     @Provides
     @Singleton

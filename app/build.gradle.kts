@@ -24,7 +24,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            buildConfigField("String", "DEBUG_OTP", "\"123456\"")
+        }
         release {
+            buildConfigField("String", "DEBUG_OTP", "\"\"")
             optimization {
                 enable = false
             }
@@ -36,6 +40,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -67,6 +72,7 @@ dependencies {
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.auth)
     implementation(libs.firebase.firestore)
+    implementation(libs.firebase.functions)
     implementation(libs.firebase.messaging)
     implementation(libs.firebase.crashlytics)   // M5: crash reporting
     implementation(libs.firebase.perf)           // M5: performance monitoring

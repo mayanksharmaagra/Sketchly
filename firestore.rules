@@ -63,6 +63,13 @@ service cloud.firestore {
       allow read, write: if isSignedIn() && isOwner(userId);
     }
 
+    // ── Email OTPs ──
+    // Written and read exclusively by Cloud Functions (Admin SDK).
+    // Deny all client access to prevent enumeration or bypass attacks.
+    match /emailOtps/{email} {
+      allow read, write: if false;
+    }
+
     // Deny everything else by default.
     match /{document=**} {
       allow read, write: if false;

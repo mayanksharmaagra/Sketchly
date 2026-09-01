@@ -15,6 +15,8 @@ import com.jrprofessor.sketchly.ui.screens.inbox.InboxScreen
 import com.jrprofessor.sketchly.ui.screens.settings.SettingsScreen
 import com.jrprofessor.sketchly.ui.screens.viewer.SketchlyViewerScreen
 import com.jrprofessor.sketchly.ui.screens.preview.ScreenPreviewScreen
+import com.jrprofessor.sketchly.ui.screens.contacts.ContactPermissionScreen
+import com.jrprofessor.sketchly.ui.screens.started.StartedScreen
 
 @Composable
 fun SketchlyNavGraph(
@@ -27,11 +29,27 @@ fun SketchlyNavGraph(
         startDestination = startDestination,
         modifier = modifier,
     ) {
+        composable(Screen.GetStarted.route) {
+            StartedScreen(onGetStarted = {
+                navController.navigate(Screen.Auth.route)
+            })
+        }
         composable(Screen.Auth.route) {
             AuthScreen(
                 onAuthSuccess = {
-                    navController.navigate(Screen.Draw.route) {
+                    // Navigate to contact permission gate instead of directly to Draw
+                    navController.navigate(Screen.ContactPermission.route) {
                         popUpTo(Screen.Auth.route) { inclusive = true }
+                    }
+                },
+            )
+        }
+
+        composable(Screen.ContactPermission.route) {
+            ContactPermissionScreen(
+                onContinue = {
+                    navController.navigate(Screen.Draw.route) {
+                        popUpTo(Screen.ContactPermission.route) { inclusive = true }
                     }
                 },
             )
