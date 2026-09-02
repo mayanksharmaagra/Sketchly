@@ -159,7 +159,7 @@ fun ContactPermissionContent(
             Box(
                 modifier = Modifier
                     .scale(iconScale)
-                    .size(112.dp)
+                    .size(100.dp)
                     .clip(CircleShape)
                     .background(TextEditorBgColor)
                     .border(

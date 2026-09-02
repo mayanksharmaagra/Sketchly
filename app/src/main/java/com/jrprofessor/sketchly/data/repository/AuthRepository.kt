@@ -95,9 +95,8 @@ class AuthRepository @Inject constructor(
      * Calls [onAutoVerified] if Firebase instantly verifies (test devices, etc).
      * Calls [onError] with a human-readable message on failure.
      *
-     * In **debug builds** the Firebase SMS call is skipped entirely.
-     * [onCodeSent] is invoked immediately with a fixed sentinel verificationId
-     * (`"DEBUG_VERIFICATION_ID"`). Use OTP `123456` to complete verification.
+     * For testing without real SMS, register test phone numbers in:
+     * Firebase Console → Authentication → Sign-in method → Phone → Phone numbers for testing.
      */
     fun sendPhoneOtp(
         phoneNumber: String,
@@ -106,14 +105,6 @@ class AuthRepository @Inject constructor(
         onAutoVerified: (user: FirebaseUser) -> Unit,
         onError: (message: String) -> Unit,
     ) {
-        // ── Debug bypass ───────────────────────────────────────────────────
-        if (BuildConfig.DEBUG_OTP.isNotEmpty()) {
-            Log.d("AuthRepository", "[DEBUG] Skipping real SMS. Use OTP: ${BuildConfig.DEBUG_OTP}")
-            onCodeSent("DEBUG_VERIFICATION_ID")
-            return
-        }
-
-        // ── Release: real Firebase Phone Auth ──────────────────────────────
         val callbacks = object : PhoneAuthProvider.OnVerificationStateChangedCallbacks() {
 
             override fun onVerificationCompleted(credential: PhoneAuthCredential) {
@@ -155,34 +146,13 @@ class AuthRepository @Inject constructor(
 
     /**
      * Verifies the 6-digit [smsCode] against the [verificationId] received
-     * from [sendPhoneOtp]. On success, the user is signed in.
-     *
-     * In **debug builds**, if [verificationId] is the debug sentinel, any code
-     * equal to [BuildConfig.DEBUG_OTP] (`123456`) is accepted without Firebase.
-     * The user is then signed in anonymously so the rest of the app works.
+     * from [sendPhoneOtp]. On success, the user is signed in via real Firebase
+     * Phone Auth in both debug and release builds.
      */
     suspend fun verifyPhoneOtp(
         verificationId: String,
         smsCode: String,
     ): Result<FirebaseUser> {
-        // ── Debug bypass ───────────────────────────────────────────────────
-        if (BuildConfig.DEBUG_OTP.isNotEmpty() && verificationId == "DEBUG_VERIFICATION_ID") {
-            return if (smsCode == BuildConfig.DEBUG_OTP) {
-                try {
-                    val result = auth.signInAnonymously().await()
-                    val user = result.user ?: throw IllegalStateException("Anonymous sign-in returned null")
-                    syncUserProfile(user)
-                    Log.d("AuthRepository", "[DEBUG] Phone OTP accepted. Signed in anonymously.")
-                    Result.success(user)
-                } catch (e: Exception) {
-                    Result.failure(e)
-                }
-            } else {
-                Result.failure(IllegalArgumentException("[DEBUG] Invalid OTP. Expected: ${BuildConfig.DEBUG_OTP}"))
-            }
-        }
-
-        // ── Release: real Firebase credential check ────────────────────────
         return try {
             val credential = PhoneAuthProvider.getCredential(verificationId, smsCode)
             val result = auth.signInWithCredential(credential).await()
@@ -335,12 +305,24 @@ class AuthRepository @Inject constructor(
     // ── Display name ──────────────────────────────────────────────────────
 
     /**
-     * Writes [displayName] into the `users/{uid}` Firestore document.
+     * Writes [displayName] (and optionally [phoneNumber]) into the `users/{uid}` Firestore document.
      * Called after phone OTP verification when the user has not yet set a name.
+     *
+     * [phoneNumber] is included here because in the debug-bypass path the underlying
+     * FirebaseUser is anonymous (no phone number on the Auth object), so we must
+     * persist the number the user typed explicitly.
      */
-    suspend fun updateDisplayName(uid: String, displayName: String) {
+    suspend fun updateDisplayName(
+        uid: String,
+        displayName: String,
+        phoneNumber: String = "",
+    ) {
+        val updates = mutableMapOf<String, Any>("displayName" to displayName)
+        if (phoneNumber.isNotBlank()) {
+            updates["phoneNumber"] = phoneNumber
+        }
         firestore.collection("users").document(uid)
-            .update("displayName", displayName)
+            .update(updates)
             .await()
     }
 

@@ -278,7 +278,10 @@ class AuthViewModel @Inject constructor(
             try {
                 val uid = authRepository.currentUserId
                 if (uid != null) {
-                    authRepository.updateDisplayName(uid, name)
+                    val fullPhone = "${state.countryCode}${state.phoneNumber}".takeIf {
+                        state.isPhoneMode && state.phoneNumber.isNotBlank()
+                    }.orEmpty()
+                    authRepository.updateDisplayName(uid, name, fullPhone)
                 }
                 _uiState.update { it.copy(isLoading = false) }
                 onSuccess()

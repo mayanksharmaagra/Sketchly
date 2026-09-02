@@ -1,16 +1,17 @@
 # Development Plan
-## Scribble
+## Sketchly — v1
 
 **A messaging app where every message is a hand-drawn note or doodle, deliverable instantly and surfaced on the Home Screen via widgets.**
 
-Based on the PRD, SRS, Architecture, and UI/UX documents. This plan sequences work so development can begin without guessing.
+> **Changelog:** Auth updated — phone/OTP only. Full Name + Username screen added after OTP. Contact sync + username search + follow-request system added as new milestones. Email/password removed from V1 scope.
 
 ---
 
-## 1. MVP Scope Recap
+## 1. V1 Scope Recap
 
-In scope: draw, send (1:many), Home Screen widget, emoji reactions, inbox, history, push notifications, phone/email auth.
-Out of scope: typed text messages, audio/video, social feed, multiple widget themes, monetization. (Full list in PRD §10.)
+**In scope:** phone + OTP auth, username, contact sync (hash matching), username search, follow-request system, draw, send, inbox, widget, emoji reactions, history.
+
+**Out of scope:** email/password (V2 from Settings), text tool, video/audio Scribbles, social feed, monetization.
 
 ---
 
@@ -18,129 +19,167 @@ Out of scope: typed text messages, audio/video, social feed, multiple widget the
 
 | Milestone | Goal |
 |---|---|
-| M0 — Project Setup | Repo, tooling, CI, Firebase project provisioned |
-| M1 — Core Draw & Local Persistence | Canvas works, Scribbles save locally, feels good to use |
-| M2 — Backend Integration | Auth, Firestore, send/receive across two real accounts |
-| M3 — Notifications & Widget | Push wakes device, widget renders and updates |
-| M4 — Reactions & History | Full feature set complete |
-| M5 — Hardening & QA | Edge cases, performance, accessibility, error states |
-| M6 — Release Candidate | Internal testing track, bug fixing, store listing |
+| M0 — Project Setup | Repo, tooling, CI, Firebase provisioned |
+| M1 — Auth (Phone + Username) | Signup, OTP verify, name + username screen, login |
+| M2 — User Profile + Firestore | UserProfile model, Firestore write/read, security rules |
+| M3 — Contact Sync | Hash matching, suggested contacts, Room cache |
+| M4 — Search + Follow Request | Username search, follow send/accept/decline, connections |
+| M5 — Draw + Send | Canvas, recipient picker (connected users only), optimistic send |
+| M6 — Notifications + Widget | FCM push, Glance widget, WorkManager update job |
+| M7 — Reactions + History | Reaction write, viewer, history screen with pagination |
+| M8 — Hardening + QA | Edge cases, performance, accessibility, security rules audit |
+| M9 — Release Candidate | Internal testing, bug bash, Play Store listing |
 
 ---
 
 ## 3. Detailed Roadmap
 
 ### M0 — Project Setup
-- [ ] Initialize Android project (Kotlin, Compose, min SDK 26)
-- [ ] Set up Hilt DI, base module structure per Architecture doc §2 project structure
-- [ ] Provision Firebase project (dev + staging + prod), enable Auth, Firestore, Storage, Functions, FCM
+- [ ] Initialize Android project (Kotlin, Compose, Hilt, min SDK 26)
+- [ ] Set up base module structure per Architecture doc
+- [ ] Provision Firebase project (dev + staging + prod): Auth, Firestore, Storage, Functions, FCM
 - [ ] Set up GitHub Actions CI (lint, unit tests on PR)
-- [ ] Configure Firebase emulator suite for local dev
-- **Definition of Done:** app builds and runs a blank Compose screen; CI pipeline green on a trivial PR; Firebase emulators run locally.
+- [ ] Configure Firebase emulator suite for local dev (Auth, Firestore, Functions)
+- **DoD:** app builds, runs blank Compose screen, CI green, emulators run locally
 
-### M1 — Core Draw & Local Persistence
-*Depends on: M0*
-- [ ] Build Draw screen composable: Canvas + pointerInput stroke capture (SRS FR-3)
-- [ ] Implement pen color/thickness selection, undo, clear (SRS FR-3.2–3.4)
-- [ ] Define data models (`Scribble`, `Stroke`, `Point`) per Architecture §2
-- [ ] Set up Room database + DAOs for local Scribble persistence
-- [ ] Canvas state survives backgrounding (SRS FR-3.5)
-- **Priority:** Highest — this is the core product loop; everything else is scaffolding around it.
-- **Definition of Done:** user can draw, undo, clear, and the in-progress drawing survives an app background/foreground cycle. No backend involved yet.
+### M1 — Auth (Phone + OTP + Username)
+- [ ] Phone number entry screen (E.164 format validation)
+- [ ] Firebase Phone Auth — OTP send + verify
+- [ ] New user detection (first time this phone number is seen)
+- [ ] Full Name + Username screen (shown only for new users)
+- [ ] Username uniqueness check against Firestore before account creation
+- [ ] Returning user → skip name/username → go directly to Inbox
+- [ ] Session persistence (Firebase refresh token)
+- [ ] Logout → clear Room DB + session
+- **DoD:** full signup and login flows work on a real device with a real SIM; returning user skips setup; username uniqueness enforced
 
-### M2 — Backend Integration (Auth, Send, Receive)
-*Depends on: M1*
-- [ ] Implement phone/OTP and email/password auth (Firebase Auth) — SRS FR-1
-- [ ] Implement contact sync (opt-in) and manual contact add — SRS FR-2
-- [ ] Build Recipient Picker screen (UI/UX §4.3)
-- [ ] Implement Firestore write on send (optimistic local write → async remote write) — Architecture §4
-- [ ] Implement Firestore Security Rules per SRS §7; validate with emulator test suite
-- [ ] Build Inbox screen with Firestore-synced Room cache — SRS FR-5
-- [ ] Implement retry/backoff for failed sends via WorkManager — SRS FR-4.4
-- **Priority:** Highest, immediately after M1 — no product without this.
-- **Definition of Done:** two real test accounts can send/receive a Scribble end-to-end; failed sends visibly retry and eventually show a clear failure state; security rules block unauthorized reads/writes (verified by emulator tests).
+### M2 — UserProfile + Firestore
+- [ ] Define UserProfile data model (uid, displayName, username, phoneNumberHash, avatarUrl, isSearchable, createdAt, authProvider)
+- [ ] Write UserProfile to Firestore on signup
+- [ ] Firestore Security Rules v1 (user can only write own profile; read own profile always; read others limited to public fields)
+- [ ] Verify rules via Firestore emulator test suite
+- [ ] Room UserProfileEntity + DAO
+- **DoD:** UserProfile created on signup, security rules block unauthorized reads/writes (emulator verified)
 
-### M3 — Notifications & Home Screen Widget
-*Depends on: M2*
-- [ ] Implement `onScribbleCreate` Cloud Function for FCM fan-out (Architecture §7)
-- [ ] Implement `ScribbleMessagingService` (FCM receiver) on client
-- [ ] Implement `WidgetUpdateWorker` (fetch, render bitmap, cache, trigger widget update)
-- [ ] Build `ScribbleWidget` (Glance) — 2x2 and 4x2 layouts per UI/UX §4.6
-- [ ] Build `ScribbleWidgetReceiver`, manifest registration
-- [ ] Implement widget empty/stale states
-- [ ] Build first-run widget install onboarding flow (UI/UX §2)
-- **Priority:** High — this is the product's key differentiator; do not treat as a stretch goal.
-- **Definition of Done:** sending a Scribble from Device A causes Device B's Home Screen widget to update within the 10-second target (SRS FR-6.2) without the app being opened on Device B.
+### M3 — Contact Sync
+- [ ] READ_CONTACTS permission request with rationale dialog
+- [ ] Read device contacts → normalize to E.164 → SHA-256 hash client-side
+- [ ] `matchContactsByHash` Cloud Function (authenticated HTTP, accepts hashes[], returns matched UserProfiles)
+- [ ] Store matched users in Room (SuggestedContactEntity, source="contact_sync")
+- [ ] "People You May Know" section in Find Friends screen
+- [ ] Users who decline permission — skip silently, offer retry in Settings
+- [ ] Network inspection verification: confirm raw numbers never transmitted
+- **DoD:** contact sync shows matched Sketchly users from device contacts; confirmed by network log that only hashes are sent
 
-### M4 — Reactions & History
-*Depends on: M2 (Reactions), M2 (History — can run in parallel with M3)*
-- [ ] Build Scribble Viewer screen with reaction chip row (UI/UX §4.4)
-- [ ] Implement reaction write + Firestore security rule (SRS FR-7, §7)
-- [ ] Implement `onReactionCreate` Cloud Function for sender notification
-- [ ] Build History screen with date grouping, contact filter, pagination (SRS FR-8)
-- [ ] Implement stroke-by-stroke replay animation (UI/UX §12) — capped at 1.5s
-- **Priority:** Medium-high — required for MVP acceptance criteria, but can proceed in parallel with M3 since it depends only on M2.
-- **Definition of Done:** reactions sync live when sender's app is foregrounded and via notification when backgrounded; History loads paginated results correctly with no full-dataset load into memory.
+### M4 — Search + Follow Request System
+- [ ] Username search screen (exact match, Firestore query)
+- [ ] Search result card: avatar, name, username, Follow/Pending/Connected button
+- [ ] isSearchable = false users excluded from results
+- [ ] Send follow request → write to Firestore follow_requests collection
+- [ ] `onFollowRequestCreate` Cloud Function → FCM to recipient
+- [ ] Follow Requests screen (incoming list: accept / decline)
+- [ ] `onFollowRequestAccept` Cloud Function → write connection docs both ways → FCM to sender
+- [ ] Cancel outgoing request
+- [ ] Room: ConnectionEntity, FollowRequestEntity DAOs
+- [ ] Firestore Security Rules for follow_requests and connections
+- **DoD:** full follow flow works end-to-end on two real devices; connections appear in Room + Firestore after accept; security rules verified
 
-### M5 — Hardening & QA
-*Depends on: M1–M4 complete*
-- [ ] Implement all error/empty states defined in UI/UX §7
-- [ ] Accessibility pass: touch targets, TalkBack labels, font scaling, contrast (UI/UX §9)
-- [ ] Performance validation against SRS §11 targets on a mid-tier reference device
-- [ ] Edge case testing per SRS §9 (offline send, uninstalled recipient, force-stopped app widget behavior, etc.)
-- [ ] Rate limiting / abuse protection verification (SRS §10, BR-3/BR-4)
-- [ ] Crashlytics + Performance Monitoring wired and verified in staging
-- **Definition of Done:** every edge case in SRS §9 has a defined, tested, non-crashing behavior; performance targets met on reference hardware; accessibility checklist passes.
+### M5 — Draw + Send
+- [ ] Draw screen: canvas, pointerInput stroke capture, color/thickness picker, undo, clear
+- [ ] Canvas state persists on app background
+- [ ] Recipient picker — only shows mutually connected users (from Room ConnectionEntity)
+- [ ] Multi-select (max 10)
+- [ ] Optimistic local write (Room) → async Firestore write
+- [ ] WorkManager retry (exponential backoff, max 5 attempts)
+- [ ] "Failed to send — tap to retry" state
+- [ ] `onScribbleCreate` Cloud Function → FCM fan-out
+- **DoD:** two connected devices can exchange a Scribble end-to-end; failed sends retry and show clear error
 
-### M6 — Release Candidate
-*Depends on: M5*
+### M6 — Notifications + Home Screen Widget
+- [ ] FCM data message handling (ScribbleMessagingService)
+- [ ] WidgetUpdateWorker: fetch Scribble → render bitmap → update Glance widget
+- [ ] ScribbleWidget (Glance): 2x2 and 4x2 layouts, unread Scribble, empty state
+- [ ] Widget deep-link → ScribbleViewerScreen
+- [ ] First-run widget install onboarding (after first successful send)
+- [ ] Widget doodle preview toggle in Settings
+- **DoD:** widget updates within 10 seconds of Scribble received without opening the app; deep-link opens correct Scribble
+
+### M7 — Reactions + History
+- [ ] Scribble Viewer screen (fullscreen, replay animation, reaction row)
+- [ ] Reaction write → Firestore; live update via snapshot listener
+- [ ] `onReactionCreate` Cloud Function → FCM to sender
+- [ ] History screen: date-grouped grid, contact filter, Paging 3
+- [ ] Contact's Scribbles screen (all Scribbles with one person)
+- **DoD:** reactions sync in real-time when app is open and via notification when backgrounded; history paginates correctly
+
+### M8 — Hardening + QA
+- [ ] All error/empty states from SRS §8 implemented and tested
+- [ ] All edge cases from SRS §9 tested and non-crashing
+- [ ] Accessibility pass (touch targets, TalkBack, contrast, font scaling)
+- [ ] Performance validation on mid-tier reference device (all SRS §11 targets)
+- [ ] Full Firestore Security Rules audit via emulator suite
+- [ ] Rate limiting verified (send + follow request limits)
+- [ ] OTP lockout after 3 failed attempts tested
+- [ ] Crashlytics + Performance Monitoring verified in staging
+- **DoD:** all SRS acceptance criteria pass; crash-free rate ≥ 99.5% in staging; performance targets met on reference device
+
+### M9 — Release Candidate
 - [ ] Internal testing track release (Play Console)
-- [ ] Bug bash + triage (severity-based fix prioritization)
-- [ ] Store listing assets (screenshots reflecting UI/UX doc, description from PRD problem/goals)
-- [ ] Final security rules + rate limit review before public release
-- [ ] Staged rollout plan (e.g., 10% → 50% → 100%)
-- **Definition of Done:** crash-free session rate ≥ 99.5% in internal testing (PRD §7 target), no P0/P1 bugs open, staged rollout plan approved.
+- [ ] Bug bash + severity-based triage
+- [ ] Play Store listing: screenshots, description, content rating
+- [ ] Final security rules + rate limit review
+- [ ] Staged rollout plan (10% → 50% → 100%)
+- **DoD:** no P0/P1 bugs open; crash-free rate ≥ 99.5% in internal testing; staged rollout approved
 
 ---
 
-## 4. Dependency Graph (Summary)
+## 4. Dependency Graph
 
 ```
 M0 (Setup)
-  └─► M1 (Draw + Local)
-        └─► M2 (Auth + Send/Receive Backend)
-              ├─► M3 (Push + Widget)
-              └─► M4 (Reactions + History)  [can run parallel to M3]
-                    └─► M5 (Hardening/QA)
-                          └─► M6 (Release Candidate)
+  └─► M1 (Auth)
+        └─► M2 (UserProfile + Firestore)
+              ├─► M3 (Contact Sync)
+              │         └─► M4 (Search + Follow)
+              │                   └─► M5 (Draw + Send)
+              │                             ├─► M6 (Notifications + Widget)
+              │                             └─► M7 (Reactions + History)
+              │                                         └─► M8 (Hardening)
+              │                                                   └─► M9 (RC)
+              └─► M2 security rules must complete before M3/M4 begin
 ```
 
 ---
 
-## 5. Priorities (if timeline pressure forces cuts)
+## 5. Priorities (If Timeline Pressure Forces Cuts)
 
-1. **Non-negotiable for MVP:** M1, M2, M3 (draw, send, widget — this is the entire product thesis)
-2. **Required but flexible on polish:** M4 reactions (can ship with a smaller emoji set), History (can ship with simpler flat list before full date-grouped/filtered UI)
-3. **Never cut:** Security rules validation, retry/failure states, widget empty state — cutting these produces a broken-feeling product, not just a smaller one
+1. **Non-negotiable:** M0→M5 — without auth, connections, draw, and send, there is no product
+2. **Non-negotiable:** M6 widget — this is Sketchly's core differentiator
+3. **Required but flexible on polish:** M7 reactions (can ship with 3 emoji instead of 5), History (can ship as flat list before date-grouped grid)
+4. **Never cut:** Security rules audit, contact sync privacy verification (raw number check), OTP lockout — cutting these creates legal/trust risk
 
 ---
 
-## 6. Definition of Done (Global, applies to every task above)
+## 6. Definition of Done (Global)
 
-A task is "done" only when:
-- [ ] Code is merged to `main` via reviewed PR with passing CI
-- [ ] Corresponding SRS functional requirement(s) are satisfied and testable
-- [ ] Corresponding UI/UX spec is matched (or deviations are explicitly approved)
-- [ ] Manual test performed on at least one mid-tier physical device (not emulator-only)
+A task is done only when:
+- [ ] Code merged to `main` via reviewed PR with passing CI
+- [ ] Corresponding SRS requirement satisfied and testable
+- [ ] Manual test on at least one mid-tier physical device
 - [ ] No new Crashlytics-reportable crash introduced
-- [ ] Firestore security rules updated and tested if the task touches data access patterns
+- [ ] Firestore security rules updated and emulator-tested if the task touches data access patterns
+- [ ] UI matches the UI/UX doc (or deviation is explicitly approved)
 
 ---
 
-## 7. Suggested Team Sequencing (if more than one developer)
+## 7. Suggested Team Split (2 developers)
 
-- **Dev A (Client-focused):** M1 → M3 (widget/notifications) → M5 accessibility/perf
-- **Dev B (Backend/Integration-focused):** M0 backend setup → M2 → M4 → M5 edge cases/security
-- Both converge on M6 for release hardening and bug bash.
-
-This plan is sequenced so development can start immediately at M0 without further clarification, with clear stopping points (Definition of Done) at every milestone.
+| Dev A (Client) | Dev B (Backend/Integration) |
+|---|---|
+| M1 UI screens (phone, OTP, name/username) | M0 Firebase setup + emulators |
+| M3 contact reading + hashing (client-side) | M2 Firestore schema + security rules |
+| M4 Search UI + Follow Request UI | M3 matchContactsByHash Cloud Function |
+| M5 Draw canvas + recipient picker UI | M4 onFollowRequest Cloud Functions |
+| M6 Glance widget + deep-link | M5 Firestore write + WorkManager retry |
+| M7 Viewer + History UI | M6 FCM + WidgetUpdateWorker |
+| M8 Accessibility + UI edge cases | M8 Security audit + performance |

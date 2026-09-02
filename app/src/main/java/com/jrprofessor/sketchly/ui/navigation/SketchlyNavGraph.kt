@@ -66,6 +66,7 @@ fun SketchlyNavGraph(
 
         composable(Screen.Draw.route) {
             DrawScreen(
+                onNavigateBack = { navController.popBackStack() },
                 onNavigateToCircle = {
                     navController.navigate(Screen.Circle.route)
                 },
