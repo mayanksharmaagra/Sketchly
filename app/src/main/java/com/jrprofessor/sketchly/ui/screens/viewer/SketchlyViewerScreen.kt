@@ -56,6 +56,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -70,6 +71,7 @@ import com.jrprofessor.sketchly.ui.components.ViewerSkeleton
 import com.jrprofessor.sketchly.ui.theme.CanvasCardShape
 import com.jrprofessor.sketchly.ui.theme.PaperIvory
 import com.jrprofessor.sketchly.ui.theme.PillShape
+import com.jrprofessor.sketchly.ui.theme.SketchlyTheme
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -170,6 +172,23 @@ fun SketchlyViewerScreen(
         viewModel.loadSketch(sketchId)
     }
 
+    ViewerScreenContent(
+        uiState = uiState,
+        isSender = uiState.sketch?.senderId == viewModel.currentUserId,
+        onBack = onBack,
+        onReact = viewModel::sendReaction,
+    )
+}
+
+@Composable
+fun ViewerScreenContent(
+    uiState: ViewerUiState,
+    isSender: Boolean,
+    onBack: () -> Unit,
+    onReact: (String) -> Unit,
+) {
+    val density = LocalDensity.current
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -244,7 +263,6 @@ fun SketchlyViewerScreen(
         Spacer(modifier = Modifier.height(12.dp))
 
         // ── Reactions received summary (shown to sender only, SRS FR-7.3) ──
-        val isSender = uiState.sketch?.senderId == viewModel.currentUserId
         val reactions = uiState.reactions
         if (isSender && reactions.isNotEmpty()) {
             val grouped = reactions.groupBy { it.emoji }
@@ -314,7 +332,7 @@ fun SketchlyViewerScreen(
                                 if (isSelected) MaterialTheme.colorScheme.primaryContainer
                                 else Color.Transparent,
                             )
-                            .clickable(onClickLabel = "React with $emoji") { viewModel.sendReaction(emoji) }
+                            .clickable(onClickLabel = "React with $emoji") { onReact(emoji) }
                             .semantics { contentDescription = "React with $emoji" },
                         contentAlignment = Alignment.Center,
                     ) {
@@ -338,6 +356,43 @@ fun SketchlyViewerScreen(
                 }
             }
         }
+    }
+}
+
+// ── Previews ──
+
+@Preview(name = "Viewer — Loading", showBackground = true)
+@Composable
+private fun ViewerScreenLoadingPreview() {
+    SketchlyTheme {
+        ViewerScreenContent(
+            uiState = ViewerUiState(isLoading = true),
+            isSender = false,
+            onBack = {},
+            onReact = {},
+        )
+    }
+}
+
+@Preview(name = "Viewer — Loaded", showBackground = true)
+@Composable
+private fun ViewerScreenLoadedPreview() {
+    val fakeSketch = Sketch(
+        id = "preview",
+        senderId = "uid_me",
+        senderDisplayName = "Alice",
+        recipientIds = emptyList(),
+        strokes = emptyList(),
+        createdAt = System.currentTimeMillis(),
+        isRead = true,
+    )
+    SketchlyTheme {
+        ViewerScreenContent(
+            uiState = ViewerUiState(sketch = fakeSketch, isLoading = false, replayStarted = true),
+            isSender = false,
+            onBack = {},
+            onReact = {},
+        )
     }
 }
 

@@ -83,7 +83,7 @@ class PhoneVisualTransformation(
  */
 fun getCountryPhoneCode(): String {
     val countryIso = java.util.Locale.getDefault().country
-    return countryCodeMap[countryIso] ?: "+1" // Default to +1
+    return countryCodeMap[countryIso] ?: "+91" // Default to +1
 }
 
 private val countryCodeMap = mapOf(

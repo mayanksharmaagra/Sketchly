@@ -1,17 +1,9 @@
 package com.jrprofessor.sketchly.ui.screens.draw
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -21,7 +13,6 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -36,12 +27,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.automirrored.rounded.Undo
-import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -49,7 +35,6 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -71,40 +56,37 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jrprofessor.sketchly.data.model.DrawPoint
 import com.jrprofessor.sketchly.data.model.Stroke
 import com.jrprofessor.sketchly.data.model.hexToColor
-import com.jrprofessor.sketchly.ui.components.RecipientPickerSheet
 import com.jrprofessor.sketchly.ui.theme.AppNameColor
 import com.jrprofessor.sketchly.ui.theme.BgColor
 import com.jrprofessor.sketchly.ui.theme.ButtonGold
 import com.jrprofessor.sketchly.ui.theme.PaperIvory
+import com.jrprofessor.sketchly.ui.theme.SketchlyTheme
 import com.jrprofessor.sketchly.ui.theme.TextEditorBgColor
 import com.jrprofessor.sketchly.ui.theme.TextEditorBorderColor
 import com.jrprofessor.sketchly.ui.theme.TextMuted
 
-// ── Eraser sentinel — stored as a special hex in the stroke ──────────────────
-private val EraserColor = Color(0x00000000) // fully transparent sentinel
+// ── Eraser sentinel ──────────────────────────────────────────────────────────
+private val EraserColor = Color(0x00000000)
 private const val ERASER_HEX = "ERASER"
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DrawScreen(
     onNavigateBack: () -> Unit = {},
-    onNavigateToCircle: () -> Unit = {},
+    onNavigateToSendTo: () -> Unit = {},
     drawViewModel: DrawViewModel = hiltViewModel(),
 ) {
     val uiState by drawViewModel.uiState.collectAsStateWithLifecycle()
-    val contacts by drawViewModel.contacts.collectAsStateWithLifecycle()
-    val density = LocalDensity.current
     val snackbarHostState = remember { SnackbarHostState() }
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    // Eraser toggle local state
     var isEraserActive by remember { mutableStateOf(false) }
     var lastPenColor by remember { mutableStateOf(uiState.selectedColor) }
 
@@ -114,14 +96,42 @@ fun DrawScreen(
             isEraserActive = false
         }
     }
-
-    LaunchedEffect(uiState.sendSuccessMessage) {
-        uiState.sendSuccessMessage?.let { snackbarHostState.showSnackbar(it) }
-    }
     LaunchedEffect(uiState.errorMessage) {
         uiState.errorMessage?.let { snackbarHostState.showSnackbar(it) }
     }
 
+    DrawScreenContent(
+        uiState = uiState,
+        isEraserActive = isEraserActive,
+        snackbarHostState = snackbarHostState,
+        onNavigateBack = onNavigateBack,
+        onNavigateToSendTo = onNavigateToSendTo,
+        onEraserToggle = { isEraserActive = it },
+        onColorSelected = { color ->
+            isEraserActive = false
+            drawViewModel.selectColor(color)
+        },
+        onStrokeStart = drawViewModel::onStrokeStart,
+        onStrokeMove = drawViewModel::onStrokeMove,
+        onStrokeEnd = drawViewModel::onStrokeEnd,
+        onUndo = drawViewModel::undo,
+    )
+}
+
+@Composable
+fun DrawScreenContent(
+    uiState: DrawUiState,
+    isEraserActive: Boolean,
+    snackbarHostState: SnackbarHostState,
+    onNavigateBack: () -> Unit,
+    onNavigateToSendTo: () -> Unit,
+    onEraserToggle: (Boolean) -> Unit,
+    onColorSelected: (Color) -> Unit,
+    onStrokeStart: (DrawPoint) -> Unit,
+    onStrokeMove: (DrawPoint) -> Unit,
+    onStrokeEnd: () -> Unit,
+    onUndo: () -> Unit,
+) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -132,10 +142,10 @@ fun DrawScreen(
                 .fillMaxSize()
                 .statusBarsPadding(),
         ) {
-            // ── Top Bar ────────────────────────────────────────────────────
+            // ── Top bar ──────────────────────────────────────────────────────
             DrawTopBar(onNavigateBack = onNavigateBack)
 
-            // ── Canvas ─────────────────────────────────────────────────────
+            // ── Paper canvas area ─────────────────────────────────────────────
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -146,128 +156,167 @@ fun DrawScreen(
                     strokes = uiState.strokes,
                     currentStroke = uiState.currentStroke,
                     isEraserActive = isEraserActive,
-                    eraserThickness = uiState.selectedThickness * 3f,
-                    onStrokeStart = { drawViewModel.onStrokeStart(it) },
-                    onStrokeMove = { drawViewModel.onStrokeMove(it) },
-                    onStrokeEnd = { drawViewModel.onStrokeEnd() },
+                    onStrokeStart = onStrokeStart,
+                    onStrokeMove = onStrokeMove,
+                    onStrokeEnd = onStrokeEnd,
                     modifier = Modifier.fillMaxSize(),
                 )
+
+                // Hint chip — visible only when canvas is blank
+                if (uiState.strokes.isEmpty() && uiState.currentStroke == null) {
+                    HintChip(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = 16.dp),
+                    )
+                }
             }
 
-            // ── Toolbar ────────────────────────────────────────────────────
-            DrawToolbar(
+            // ── Bottom toolbar + Next ─────────────────────────────────────────
+            DrawBottomSection(
                 colors = PEN_COLORS,
                 selectedColor = if (isEraserActive) EraserColor else uiState.selectedColor,
-                onColorSelected = { color ->
-                    isEraserActive = false
-                    drawViewModel.selectColor(color)
-                },
-                selectedThickness = uiState.selectedThickness,
-                onThicknessSelected = { drawViewModel.selectThickness(it) },
+                onColorSelected = onColorSelected,
                 isEraserActive = isEraserActive,
-                onEraserToggle = {
-                    isEraserActive = !isEraserActive
-                    if (isEraserActive) {
-                        drawViewModel.selectColor(lastPenColor) // keep for undo color memory
-                    }
-                },
                 canUndo = uiState.strokes.isNotEmpty(),
-                onUndo = { drawViewModel.undo() },
-                onClear = { drawViewModel.clear() },
+                onUndo = onUndo,
+                canSend = uiState.canSend,
+                onNext = onNavigateToSendTo,
                 modifier = Modifier
                     .fillMaxWidth()
                     .navigationBarsPadding(),
             )
         }
 
-        // ── Floating Send FAB ───────────────────────────────────────────────
-        AnimatedVisibility(
-            visible = uiState.canSend,
-            enter = scaleIn(spring(Spring.DampingRatioMediumBouncy)) + fadeIn(),
-            exit = scaleOut(tween(150)) + fadeOut(),
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 24.dp, bottom = 140.dp),
-        ) {
-            FloatingActionButton(
-                onClick = { drawViewModel.openRecipientPicker() },
-                containerColor = ButtonGold,
-                contentColor = Color.White,
-                shape = CircleShape,
-                elevation = FloatingActionButtonDefaults.elevation(
-                    defaultElevation = 8.dp,
-                    pressedElevation = 4.dp,
-                ),
-                modifier = Modifier.size(60.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Rounded.Send,
-                    contentDescription = "Send Sketch",
-                    modifier = Modifier.size(26.dp),
-                )
-            }
-        }
-
-        // ── Recipient Picker ────────────────────────────────────────────────
-        if (uiState.isRecipientPickerOpen) {
-            RecipientPickerSheet(
-                sheetState = sheetState,
-                contacts = contacts,
-                selectedContactIds = uiState.selectedContactIds,
-                onContactToggle = { drawViewModel.toggleContactSelection(it) },
-                onSendConfirmed = { drawViewModel.sendSketch() },
-                onDismiss = { drawViewModel.closeRecipientPicker() },
-                onAddNewContactClick = {
-                    drawViewModel.closeRecipientPicker()
-                    onNavigateToCircle()
-                },
-            )
-        }
-
-        // ── Snackbar ────────────────────────────────────────────────────────
+        // ── Snackbar (errors only) ────────────────────────────────────────────────
         SnackbarHost(
             hostState = snackbarHostState,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 160.dp),
+                .padding(bottom = 140.dp),
+        )
+    }
+}
+
+// ── Previews ──
+
+@Preview(name = "Draw — Empty Canvas", showBackground = true)
+@Composable
+private fun DrawScreenEmptyPreview() {
+    SketchlyTheme {
+        DrawScreenContent(
+            uiState = DrawUiState(),
+            isEraserActive = false,
+            snackbarHostState = SnackbarHostState(),
+            onNavigateBack = {},
+            onNavigateToSendTo = {},
+            onEraserToggle = {},
+            onColorSelected = {},
+            onStrokeStart = {},
+            onStrokeMove = {},
+            onStrokeEnd = {},
+            onUndo = {},
+        )
+    }
+}
+
+@Preview(name = "Draw — Can Send", showBackground = true)
+@Composable
+private fun DrawScreenCanSendPreview() {
+    SketchlyTheme {
+        DrawScreenContent(
+            uiState = DrawUiState(canSend = true),
+            isEraserActive = false,
+            snackbarHostState = SnackbarHostState(),
+            onNavigateBack = {},
+            onNavigateToSendTo = {},
+            onEraserToggle = {},
+            onColorSelected = {},
+            onStrokeStart = {},
+            onStrokeMove = {},
+            onStrokeEnd = {},
+            onUndo = {},
         )
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Top Bar
+// Top Bar — back arrow + centered italic title
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
 private fun DrawTopBar(onNavigateBack: () -> Unit) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+            .padding(horizontal = 4.dp, vertical = 4.dp),
     ) {
-        IconButton(onClick = onNavigateBack) {
+        IconButton(
+            onClick = onNavigateBack,
+            modifier = Modifier.align(Alignment.CenterStart),
+        ) {
             Icon(
                 imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                 contentDescription = "Back",
                 tint = AppNameColor,
+                modifier = Modifier.size(22.dp),
             )
         }
-        Spacer(modifier = Modifier.width(4.dp))
+
         Text(
-            text = "New Scribble",
-            style = MaterialTheme.typography.titleMedium.copy(
-                fontWeight = FontWeight.SemiBold,
+            text = "Draw your first\nScribble",
+            style = MaterialTheme.typography.titleLarge.copy(
+                fontWeight = FontWeight.Bold,
                 fontStyle = FontStyle.Italic,
-                fontSize = 20.sp,
+                fontSize = 22.sp,
+                lineHeight = 28.sp,
             ),
             color = AppNameColor,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .padding(horizontal = 52.dp),
         )
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Paper Canvas — lined ruled paper look
+// Hint Chip
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun HintChip(modifier: Modifier = Modifier) {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = PaperIvory,
+        shadowElevation = 2.dp,
+        tonalElevation = 0.dp,
+        modifier = modifier,
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+        ) {
+            Text(
+                text = "♀",
+                fontSize = 13.sp,
+                color = AppNameColor.copy(alpha = 0.65f),
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = "Try drawing something small",
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 13.sp,
+                ),
+                color = AppNameColor.copy(alpha = 0.72f),
+            )
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Paper Canvas — lined ruled paper + stroke rendering
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
@@ -275,7 +324,6 @@ private fun PaperCanvas(
     strokes: List<Stroke>,
     currentStroke: Stroke?,
     isEraserActive: Boolean,
-    eraserThickness: Float,
     onStrokeStart: (DrawPoint) -> Unit,
     onStrokeMove: (DrawPoint) -> Unit,
     onStrokeEnd: () -> Unit,
@@ -286,13 +334,13 @@ private fun PaperCanvas(
     Surface(
         shape = RoundedCornerShape(20.dp),
         color = PaperIvory,
-        shadowElevation = 6.dp,
+        shadowElevation = 4.dp,
         tonalElevation = 0.dp,
         modifier = modifier.shadow(
-            elevation = 8.dp,
+            elevation = 6.dp,
             shape = RoundedCornerShape(20.dp),
             ambientColor = AppNameColor.copy(alpha = 0.08f),
-            spotColor = AppNameColor.copy(alpha = 0.12f),
+            spotColor = AppNameColor.copy(alpha = 0.10f),
         ),
     ) {
         Canvas(
@@ -325,44 +373,30 @@ private fun PaperCanvas(
             val w = size.width
             val h = size.height
 
-            // ── Ruled lines ───────────────────────────────────────────────
+            // Ruled horizontal lines
             val lineSpacingPx = with(density) { 28.dp.toPx() }
-            val lineColor = TextEditorBorderColor.copy(alpha = 0.45f)
-            val marginColor = Color(0xFFF4C0A0).copy(alpha = 0.35f)
-            val marginX = with(density) { 48.dp.toPx() }
-
-            // Horizontal ruled lines
-            var y = lineSpacingPx * 2
-            while (y < h) {
+            val lineColor = TextEditorBorderColor.copy(alpha = 0.40f)
+            var lineY = lineSpacingPx * 2f
+            while (lineY < h) {
                 drawLine(
                     color = lineColor,
-                    start = Offset(0f, y),
-                    end = Offset(w, y),
+                    start = Offset(0f, lineY),
+                    end = Offset(w, lineY),
                     strokeWidth = with(density) { 0.7.dp.toPx() },
                 )
-                y += lineSpacingPx
+                lineY += lineSpacingPx
             }
-            // Left margin line
-            drawLine(
-                color = marginColor,
-                start = Offset(marginX, 0f),
-                end = Offset(marginX, h),
-                strokeWidth = with(density) { 1.2.dp.toPx() },
-            )
 
-            // ── Strokes ───────────────────────────────────────────────────
-            strokes.forEach { stroke ->
-                drawStrokePath(stroke, w, h, density.density)
-            }
-            currentStroke?.let { stroke ->
-                drawStrokePath(stroke, w, h, density.density)
-            }
+            // Render committed strokes
+            strokes.forEach { stroke -> drawStrokePath(stroke, w, h, density.density) }
+            // Render in-progress stroke
+            currentStroke?.let { drawStrokePath(it, w, h, density.density) }
         }
     }
 }
 
 /**
- * Renders a single stroke as a smooth quadratic bezier path.
+ * Draws a single [Stroke] as a smooth quadratic-bezier path.
  */
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawStrokePath(
     stroke: Stroke,
@@ -373,30 +407,23 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawStrokePath(
     if (stroke.points.size < 2) return
 
     val path = Path()
-    val firstPoint = stroke.points.first()
-    path.moveTo(firstPoint.x * canvasWidth, firstPoint.y * canvasHeight)
+    val first = stroke.points.first()
+    path.moveTo(first.x * canvasWidth, first.y * canvasHeight)
 
     for (i in 1 until stroke.points.size) {
         val prev = stroke.points[i - 1]
-        val current = stroke.points[i]
-        val midX = ((prev.x + current.x) / 2f) * canvasWidth
-        val midY = ((prev.y + current.y) / 2f) * canvasHeight
+        val curr = stroke.points[i]
+        val midX = ((prev.x + curr.x) / 2f) * canvasWidth
+        val midY = ((prev.y + curr.y) / 2f) * canvasHeight
         path.quadraticTo(
-            prev.x * canvasWidth,
-            prev.y * canvasHeight,
-            midX,
-            midY,
+            prev.x * canvasWidth, prev.y * canvasHeight,
+            midX, midY,
         )
     }
+    val last = stroke.points.last()
+    path.lineTo(last.x * canvasWidth, last.y * canvasHeight)
 
-    val lastPoint = stroke.points.last()
-    path.lineTo(lastPoint.x * canvasWidth, lastPoint.y * canvasHeight)
-
-    val strokeColor = try {
-        hexToColor(stroke.colorHex)
-    } catch (_: Exception) {
-        Color.Black
-    }
+    val strokeColor = runCatching { hexToColor(stroke.colorHex) }.getOrDefault(Color.Black)
 
     drawPath(
         path = path,
@@ -410,125 +437,102 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawStrokePath(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Draw Toolbar — colors + pen sizes + eraser + undo/clear
+// Bottom Section — pill toolbar + Next button
 // ─────────────────────────────────────────────────────────────────────────────
 
-private val THICKNESS_OPTIONS = listOf(2f, 4f, 8f, 14f, 22f)
-
 @Composable
-private fun DrawToolbar(
+private fun DrawBottomSection(
     colors: List<Color>,
     selectedColor: Color,
     onColorSelected: (Color) -> Unit,
-    selectedThickness: Float,
-    onThicknessSelected: (Float) -> Unit,
     isEraserActive: Boolean,
-    onEraserToggle: () -> Unit,
     canUndo: Boolean,
     onUndo: () -> Unit,
-    onClear: () -> Unit,
+    canSend: Boolean,
+    onNext: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    AnimatedVisibility(
-        visible = true,
-        enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-        exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
-        modifier = modifier,
+    Column(
+        modifier = modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        // Color + undo pill
         Surface(
+            shape = RoundedCornerShape(50),
             color = TextEditorBgColor,
-            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-            shadowElevation = 12.dp,
+            shadowElevation = 8.dp,
             tonalElevation = 0.dp,
         ) {
-            Column(
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
             ) {
-                // ── Row 1: Color swatches ─────────────────────────────────
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    colors.forEach { color ->
-                        ColorDot(
-                            color = color,
-                            isSelected = !isEraserActive && color == selectedColor,
-                            onClick = { onColorSelected(color) },
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
+                // 4 color swatches
+                colors.take(4).forEachIndexed { index, color ->
+                    ColorDot(
+                        color = color,
+                        isSelected = !isEraserActive && color == selectedColor,
+                        onClick = { onColorSelected(color) },
+                    )
+                    if (index < 3) Spacer(modifier = Modifier.width(2.dp))
                 }
 
-                // ── Divider ───────────────────────────────────────────────
+                Spacer(modifier = Modifier.weight(1f))
+
+                // Vertical divider
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(1.dp)
-                        .background(TextEditorBorderColor.copy(alpha = 0.5f)),
+                        .width(1.dp)
+                        .height(28.dp)
+                        .background(TextEditorBorderColor.copy(alpha = 0.65f)),
                 )
 
-                // ── Row 2: Pen sizes + eraser + undo + clear ──────────────
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier.fillMaxWidth(),
+                Spacer(modifier = Modifier.width(4.dp))
+
+                // Undo icon button
+                IconButton(
+                    onClick = onUndo,
+                    enabled = canUndo,
                 ) {
-                    // Pen size dots
-                    THICKNESS_OPTIONS.forEach { size ->
-                        PenSizeDot(
-                            size = size,
-                            isSelected = !isEraserActive && size == selectedThickness,
-                            color = if (isEraserActive) TextMuted else selectedColor,
-                            onClick = { onThicknessSelected(size) },
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.weight(1f))
-
-                    // Vertical divider
-                    Box(
-                        modifier = Modifier
-                            .width(1.dp)
-                            .height(28.dp)
-                            .background(TextEditorBorderColor.copy(alpha = 0.6f)),
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.Undo,
+                        contentDescription = "Undo",
+                        tint = if (canUndo) AppNameColor else TextMuted.copy(alpha = 0.35f),
+                        modifier = Modifier.size(22.dp),
                     )
-
-                    // Eraser toggle
-                    EraserButton(
-                        isActive = isEraserActive,
-                        onClick = onEraserToggle,
-                    )
-
-                    // Undo
-                    IconButton(
-                        onClick = onUndo,
-                        enabled = canUndo,
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.Undo,
-                            contentDescription = "Undo",
-                            tint = if (canUndo) AppNameColor else TextMuted.copy(alpha = 0.4f),
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
-
-                    // Clear
-                    IconButton(
-                        onClick = onClear,
-                        enabled = canUndo,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Delete,
-                            contentDescription = "Clear canvas",
-                            tint = if (canUndo) Color(0xFFBA1A1A) else TextMuted.copy(alpha = 0.4f),
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
                 }
+            }
+        }
+
+        // Next → button
+        Surface(
+            shape = RoundedCornerShape(50),
+            color = if (canSend) ButtonGold else ButtonGold.copy(alpha = 0.4f),
+            shadowElevation = if (canSend) 6.dp else 0.dp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(50))
+                .clickable(
+                    enabled = canSend,
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() },
+                ) { onNext() },
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(vertical = 16.dp),
+            ) {
+                Text(
+                    text = "Next  →",
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 16.sp,
+                    ),
+                    color = Color.White,
+                )
             }
         }
     }
@@ -551,7 +555,7 @@ private fun ColorDot(
         label = "colorDotScale",
     )
     val dotSize by animateDpAsState(
-        targetValue = if (isSelected) 30.dp else 26.dp,
+        targetValue = if (isSelected) 34.dp else 28.dp,
         animationSpec = spring(stiffness = Spring.StiffnessMedium),
         label = "colorDotSize",
     )
@@ -559,7 +563,7 @@ private fun ColorDot(
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
-            .height(44.dp)
+            .size(44.dp)
             .clickable(
                 indication = null,
                 interactionSource = remember { MutableInteractionSource() },
@@ -575,87 +579,13 @@ private fun ColorDot(
                     if (isSelected) {
                         Modifier.border(
                             width = 2.5.dp,
-                            color = AppNameColor.copy(alpha = 0.5f),
+                            color = AppNameColor.copy(alpha = 0.45f),
                             shape = CircleShape,
                         )
-                    } else Modifier,
+                    } else {
+                        Modifier
+                    }
                 ),
-        )
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Pen Size Dot — visual dots of different sizes
-// ─────────────────────────────────────────────────────────────────────────────
-
-@Composable
-private fun PenSizeDot(
-    size: Float,
-    isSelected: Boolean,
-    color: Color,
-    onClick: () -> Unit,
-) {
-    // Map thickness float to visual dot dp: 2f→6dp, 4f→9dp, 8f→13dp, 14f→18dp, 22f→24dp
-    val visualDp = (size * 0.95f + 4f).coerceIn(6f, 25f)
-    val animScale by animateFloatAsState(
-        targetValue = if (isSelected) 1.25f else 1f,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "penSizeDotScale",
-    )
-
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .size(40.dp)
-            .clickable(
-                indication = null,
-                interactionSource = remember { MutableInteractionSource() },
-            ) { onClick() },
-    ) {
-        Box(
-            modifier = Modifier
-                .size(visualDp.dp)
-                .scale(animScale)
-                .clip(CircleShape)
-                .background(
-                    if (isSelected) color else TextMuted.copy(alpha = 0.45f),
-                    CircleShape,
-                ),
-        )
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Eraser Button
-// ─────────────────────────────────────────────────────────────────────────────
-
-@Composable
-private fun EraserButton(
-    isActive: Boolean,
-    onClick: () -> Unit,
-) {
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .size(40.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(
-                if (isActive) AppNameColor.copy(alpha = 0.12f) else Color.Transparent,
-            )
-            .border(
-                width = if (isActive) 1.5.dp else 0.dp,
-                color = if (isActive) AppNameColor.copy(alpha = 0.3f) else Color.Transparent,
-                shape = RoundedCornerShape(10.dp),
-            )
-            .clickable(
-                indication = null,
-                interactionSource = remember { MutableInteractionSource() },
-            ) { onClick() },
-    ) {
-        Text(
-            text = "✦",
-            fontSize = if (isActive) 18.sp else 16.sp,
-            color = if (isActive) AppNameColor else TextMuted.copy(alpha = 0.6f),
         )
     }
 }

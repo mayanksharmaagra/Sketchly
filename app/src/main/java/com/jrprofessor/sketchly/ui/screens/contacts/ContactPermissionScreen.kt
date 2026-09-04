@@ -3,171 +3,296 @@ package com.jrprofessor.sketchly.ui.screens.contacts
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.People
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jrprofessor.sketchly.R
+import com.jrprofessor.sketchly.data.model.ConnectionStatus
+import com.jrprofessor.sketchly.data.model.ContactSource
+import com.jrprofessor.sketchly.data.model.SketchlyContact
 import com.jrprofessor.sketchly.ui.theme.AppNameColor
-import com.jrprofessor.sketchly.ui.theme.BgColor
-import com.jrprofessor.sketchly.ui.theme.ButtonGold
-import com.jrprofessor.sketchly.ui.theme.PillShape
 import com.jrprofessor.sketchly.ui.theme.SketchlyTheme
-import com.jrprofessor.sketchly.ui.theme.TextEditorBgColor
-import com.jrprofessor.sketchly.ui.theme.TextEditorBorderColor
-import com.jrprofessor.sketchly.ui.theme.TextMuted
 
-// ─────────────────────────────────────────────
-// Preview
-// ─────────────────────────────────────────────
+// ============================================================
+// Colors matching the Sketchly palette
+// ============================================================
+private val Paper = Color(0xFFEFE8D6)
+private val PaperCard = Color(0xFFF7F2E4)
+private val Ink = Color(0xFF34293F)
+private val Gold = Color(0xFFC99A3C)
+private val Rust = Color(0xFFB4562F)
+private val Forest = Color(0xFF5C7A5C)
+private val Border = Color(0xFFD9CEAF)
+private val TextMuted = Color(0xFF8A7F6C)
 
-@Preview(showBackground = true, showSystemUi = true)
-@Composable
-private fun ContactPermissionScreenPreview() {
-    SketchlyTheme {
-        ContactPermissionContent(
-            onSyncContacts = {},
-            onSkip = {},
-        )
-    }
-}
+// ============================================================
+// Contact Sync Screen
+// ============================================================
 
-// ─────────────────────────────────────────────
-// Entry composable — handles runtime permission
-// ─────────────────────────────────────────────
-
-/**
- * Full-screen contact permission gate shown once after a new account is created.
- *
- * Flow:
- *  1. Show custom Sketchly rationale UI (warm cream, matching brand).
- *  2. "Sync Contacts" → launch Android READ_CONTACTS permission dialog.
- *  3. Regardless of grant/deny result, call [onContinue] — permission result
- *     can be queried later in CircleScreen if needed.
- *  4. "Skip for now" → call [onContinue] immediately, no permission requested.
- */
 @Composable
 fun ContactPermissionScreen(
-    onContinue: () -> Unit,
+    onSyncComplete: () -> Unit,  // Navigate to Tutorial/First Drawing
+    onSkip: () -> Unit,          // Navigate to Tutorial/First Drawing (skipped)
+    viewModel: ContactSyncViewModel = hiltViewModel(),
 ) {
-    // Android 13+ requires READ_CONTACTS; same launcher works for all supported APIs (29+)
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+
+    // Permission launcher — launched when ViewModel moves to RequestingPermission
     val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission(),
-    ) { _ ->
-        // Proceed regardless of grant/deny — CircleScreen handles the denied case gracefully
-        onContinue()
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            viewModel.onPermissionGranted()
+        } else {
+            viewModel.onPermissionDenied()
+        }
     }
 
-    ContactPermissionContent(
-        onSyncContacts = {
-            permissionLauncher.launch(Manifest.permission.READ_CONTACTS)
-        },
-        onSkip = onContinue,
-    )
-}
-
-// ─────────────────────────────────────────────
-// Pure UI (stateless, previewable)
-// ─────────────────────────────────────────────
-
-@Composable
-fun ContactPermissionContent(
-    onSyncContacts: () -> Unit,
-    onSkip: () -> Unit,
-) {
-    // Staggered entrance animations
-    var visible by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { visible = true }
-
-    // Subtle icon pulse on first load
-    val iconScale by animateFloatAsState(
-        targetValue = if (visible) 1f else 0.6f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMedium,
-        ),
-        label = "iconScale",
-    )
-
-    // Icon container elevation-like shadow via border animation
-    val iconBorderWidth by animateDpAsState(
-        targetValue = if (visible) 2.dp else 0.dp,
-        animationSpec = tween(durationMillis = 600),
-        label = "iconBorder",
-    )
+    // React to state changes
+    LaunchedEffect(uiState) {
+        when (uiState) {
+            is ContactSyncUiState.RequestingPermission -> {
+                // Launch system permission dialog
+                permissionLauncher.launch(Manifest.permission.READ_CONTACTS)
+            }
+            is ContactSyncUiState.Skipped -> onSkip()
+            else -> Unit
+        }
+    }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(BgColor),
-        contentAlignment = Alignment.Center,
+            .background(Paper)
+            .windowInsetsPadding(WindowInsets.systemBars)
     ) {
-        Column(
-            modifier = Modifier
-                .safeDrawingPadding()
-                .padding(horizontal = 36.dp, vertical = 48.dp)
-                .fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
+        AnimatedContent(
+            targetState = uiState,
+            transitionSpec = {
+                fadeIn() togetherWith fadeOut()
+            },
+            label = "contact_sync_state"
+        ) { state ->
+            when (state) {
+                is ContactSyncUiState.Idle,
+                is ContactSyncUiState.RequestingPermission -> {
+                    IdleState(
+                        onSyncTapped = { viewModel.onSyncButtonTapped() },
+                        onSkipTapped = { viewModel.onSkipTapped() }
+                    )
+                }
 
-            // ── Icon circle ───────────────────────────────
+                is ContactSyncUiState.Syncing -> {
+                    SyncingState()
+                }
+
+                is ContactSyncUiState.Success -> {
+                    SuccessState(
+                        matchedCount = state.matchedCount,
+                        contacts = state.contacts,
+                        onContinue = onSyncComplete
+                    )
+                }
+
+                is ContactSyncUiState.PermissionDenied -> {
+                    PermissionDeniedState(
+                        onSkipTapped = { viewModel.onSkipTapped() }
+                    )
+                }
+
+                is ContactSyncUiState.Error -> {
+                    ErrorState(
+                        message = state.message,
+                        onRetry = { viewModel.onRetryTapped() },
+                        onSkip = { viewModel.onSkipTapped() }
+                    )
+                }
+
+                is ContactSyncUiState.Skipped -> {
+                    // Empty — LaunchedEffect handles navigation immediately
+                    Box(modifier = Modifier.fillMaxSize())
+                }
+            }
+        }
+    }
+}
+
+// ============================================================
+// State composables
+// ============================================================
+
+@Composable
+private fun IdleState(
+    onSyncTapped: () -> Unit,
+    onSkipTapped: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(36.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        // Icon
+        Box(
+            modifier = Modifier
+                .size(120.dp)
+                .background(PaperCard, CircleShape)
+                .border(1.dp, Border, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_users),
+                contentDescription = null,
+                tint = AppNameColor,
+                modifier = Modifier.size(42.dp),
+            )
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Text(
+            text = "Find your people",
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold,
+            color = Ink,
+            textAlign = TextAlign.Center,
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Text(
+            text = "Sync your contacts to see who's already on Sketchly. " +
+                    "We'll never store your contacts — only secure hashes are used for matching.",
+            fontSize = 14.sp,
+            color = TextMuted,
+            textAlign = TextAlign.Center,
+            lineHeight = 20.sp,
+        )
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        // Primary CTA
+        Button(
+            onClick = onSyncTapped,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp),
+            shape = RoundedCornerShape(26.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Gold),
+            elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp)
+        ) {
+            Text(
+                text = "Sync Contacts",
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp
+            )
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // Privacy note
+        Text(
+            text = "🔒 Phone numbers are hashed on your device. Only secure hashes are shared — your raw contacts never leave your phone.",
+            fontSize = 11.sp,
+            color = TextMuted,
+            textAlign = TextAlign.Center,
+            lineHeight = 16.sp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(PaperCard, RoundedCornerShape(12.dp))
+                .border(1.dp, Border, RoundedCornerShape(12.dp))
+                .padding(12.dp)
+        )
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // Skip
+        TextButton(onClick = onSkipTapped) {
+            Text(
+                text = "Skip for now",
+                color = TextMuted,
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp
+            )
+        }
+    }
+}
+
+@Composable
+private fun SyncingState() {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        CircularProgressIndicator(color = Gold, strokeWidth = 3.dp)
+        Spacer(modifier = Modifier.height(20.dp))
+        Text(
+            text = "Finding your friends…",
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Bold,
+            color = Ink
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = "This only takes a second",
+            fontSize = 13.sp,
+            color = TextMuted
+        )
+    }
+}
+
+@Composable
+private fun SuccessState(
+    matchedCount: Int,
+    contacts: List<SketchlyContact>,
+    onContinue: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+
+        // Contact list
+        if (contacts.isNotEmpty()) {
+            LazyColumn(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 16.dp, end = 16.dp, top = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(contacts) { contact ->
+                    ContactRow(contact = contact)
+                }
+            }
+        } else {
             Box(
                 modifier = Modifier
-                    .scale(iconScale)
-                    .size(100.dp)
-                    .clip(CircleShape)
-                    .background(TextEditorBgColor)
-                    .border(
-                        width = iconBorderWidth,
-                        color = TextEditorBorderColor.copy(alpha = 0.5f),
-                        shape = CircleShape,
-                    ),
-                contentAlignment = Alignment.Center,
+                    .size(120.dp)
+                    .background(PaperCard, CircleShape)
+                    .border(1.dp, Border, CircleShape),
+                contentAlignment = Alignment.Center
             ) {
                 Icon(
                     painter = painterResource(R.drawable.ic_users),
@@ -176,97 +301,328 @@ fun ContactPermissionContent(
                     modifier = Modifier.size(42.dp),
                 )
             }
+        }
 
-            Spacer(modifier = Modifier.height(40.dp))
+        // Header
+        Column(
+            modifier = Modifier.padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = if (matchedCount == 0) "No friends found yet"
+                else "$matchedCount friend${if (matchedCount > 1) "s" else ""} on Sketchly!",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = Ink,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = if (matchedCount == 0)
+                    "Invite friends to join Sketchly — they'll show up here once they sign up."
+                else "Send them a follow request to start exchanging Scribbles.",
+                fontSize = 13.sp,
+                color = TextMuted,
+                textAlign = TextAlign.Center,
+                lineHeight = 18.sp
+            )
+        }
+        // Continue button
+        Button(
+            onClick = onContinue,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 20.dp)
+                .height(52.dp),
+            shape = RoundedCornerShape(26.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Ink),
+        ) {
+            Text(
+                text = "Continue",
+                color = Color(0xFFF2E8CE),
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp
+            )
+        }
+    }
+}
 
-            // ── Headline ─────────────────────────────────
-            AnimatedVisibility(
-                visible = visible,
-                enter = fadeIn(tween(400)) + slideInVertically(
-                    tween(400),
-                    initialOffsetY = { it / 3 },
-                ),
-            ) {
-                Text(
-                    text = "Find your people",
-                    style = MaterialTheme.typography.displaySmall.copy(
-                        fontStyle = FontStyle.Italic,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 32.sp,
-                    ),
-                    color = AppNameColor,
-                    textAlign = TextAlign.Center,
-                )
-            }
+@Composable
+private fun ContactRow(contact: SketchlyContact) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(PaperCard, RoundedCornerShape(16.dp))
+            .border(1.dp, Border, RoundedCornerShape(16.dp))
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // Avatar
+        val avatarColors = listOf(
+            Color(0xFFB4562F), Color(0xFF5C87A0),
+            Color(0xFF5C7A5C), Color(0xFFC99A3C)
+        )
+        val avatarColor = avatarColors[contact.displayName.length % avatarColors.size]
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .background(avatarColor, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = contact.displayName.take(2).uppercase(),
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp
+            )
+        }
 
-            Spacer(modifier = Modifier.height(20.dp))
+        // Name + username
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = contact.displayName,
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp,
+                color = Ink
+            )
+            Text(
+                text = "@${contact.username}",
+                fontSize = 12.sp,
+                color = TextMuted
+            )
+        }
 
-            // ── Body copy ─────────────────────────────────
-            AnimatedVisibility(
-                visible = visible,
-                enter = fadeIn(tween(500, delayMillis = 80)) + slideInVertically(
-                    tween(500, delayMillis = 80),
-                    initialOffsetY = { it / 3 },
-                ),
-            ) {
-                Text(
-                    text = "Sync your contacts to see who's already on Sketchly. We'll never message anyone without your say.",
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        fontWeight = FontWeight.Normal,
-                        lineHeight = 26.sp,
-                    ),
-                    color = TextMuted,
-                    textAlign = TextAlign.Center,
-                )
-            }
+        // Follow button
+        OutlinedButton(
+            onClick = { /* handled by FollowRequestViewModel */ },
+            shape = RoundedCornerShape(14.dp),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = Gold),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Gold),
+            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+            modifier = Modifier.height(34.dp)
+        ) {
+            Text("Follow", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+        }
+    }
+}
 
-            Spacer(modifier = Modifier.height(56.dp))
+@Composable
+private fun PermissionDeniedState(
+    onSkipTapped: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(36.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(120.dp)
+                .background(PaperCard, CircleShape)
+                .border(1.dp, Border, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("🔒", fontSize = 40.sp)
+        }
+        Spacer(modifier = Modifier.height(20.dp))
+        Text(
+            text = "Contacts access not granted",
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = Ink,
+            textAlign = TextAlign.Center
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+        Text(
+            text = "You can still find friends by searching their username. " +
+                    "You can also enable contact sync later from Settings.",
+            fontSize = 14.sp,
+            color = TextMuted,
+            textAlign = TextAlign.Center,
+            lineHeight = 20.sp
+        )
+        Spacer(modifier = Modifier.height(32.dp))
+        Button(
+            onClick = onSkipTapped,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp),
+            shape = RoundedCornerShape(26.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Ink),
+        ) {
+            Text(
+                text = "Continue without contacts",
+                color = Color(0xFFF2E8CE),
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp
+            )
+        }
+    }
+}
 
-            // ── Primary CTA — triggers Android permission ─
-            AnimatedVisibility(
-                visible = visible,
-                enter = fadeIn(tween(500, delayMillis = 160)) + slideInVertically(
-                    tween(500, delayMillis = 160),
-                    initialOffsetY = { it / 2 },
-                ),
-            ) {
-                Button(
-                    onClick = onSyncContacts,
-                    shape = PillShape,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = ButtonGold,
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp),
-                ) {
-                    Text(
-                        text = "Sync Contacts",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = Color.White,
-                    )
-                }
-            }
+@Composable
+private fun ErrorState(
+    message: String,
+    onRetry: () -> Unit,
+    onSkip: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(36.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(120.dp)
+                .background(PaperCard, CircleShape)
+                .border(1.dp, Border, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("\u26a0\ufe0f", fontSize = 36.sp)
+        }
+        Spacer(modifier = Modifier.height(20.dp))
+        Text(
+            text = "Sync failed",
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = Ink
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+        Text(
+            text = message,
+            fontSize = 14.sp,
+            color = TextMuted,
+            textAlign = TextAlign.Center,
+            lineHeight = 20.sp
+        )
+        Spacer(modifier = Modifier.height(32.dp))
+        Button(
+            onClick = onRetry,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp),
+            shape = RoundedCornerShape(26.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Gold),
+        ) {
+            Text("Try Again", color = Color.White, fontWeight = FontWeight.Bold)
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        TextButton(onClick = onSkip) {
+            Text("Skip for now", color = TextMuted, fontWeight = FontWeight.Bold)
+        }
+    }
+}
 
-            Spacer(modifier = Modifier.height(20.dp))
+// ============================================================
+// @Preview composables — one per UI state
+// ============================================================
 
-            // ── Skip link ─────────────────────────────────
-            AnimatedVisibility(
-                visible = visible,
-                enter = fadeIn(tween(500, delayMillis = 220)),
-            ) {
-                TextButton(onClick = onSkip) {
-                    Text(
-                        text = "Skip for now",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        textDecoration = TextDecoration.Underline,
-                        color = AppNameColor,
-                    )
-                }
-            }
+private val previewContacts = listOf(
+    SketchlyContact(
+        userId = "uid_1",
+        displayName = "Sakshi Arora",
+        username = "sakshi_a",
+        avatarUrl = null,
+        phoneLastFour = "4821",
+        source = ContactSource.CONTACT_SYNC,
+        connectionStatus = ConnectionStatus.SUGGESTED,
+    ),
+    SketchlyContact(
+        userId = "uid_2",
+        displayName = "Rahul Kumar",
+        username = "rahul_k",
+        avatarUrl = null,
+        phoneLastFour = "9203",
+        source = ContactSource.CONTACT_SYNC,
+        connectionStatus = ConnectionStatus.SUGGESTED,
+    ),
+    SketchlyContact(
+        userId = "uid_3",
+        displayName = "Priya Mehta",
+        username = "priya_m",
+        avatarUrl = null,
+        phoneLastFour = "7745",
+        source = ContactSource.CONTACT_SYNC,
+        connectionStatus = ConnectionStatus.SUGGESTED,
+    ),
+)
+
+@Preview(name = "Idle", showBackground = true, backgroundColor = 0xFFEFE8D6)
+@Composable
+private fun PreviewIdleState() {
+    SketchlyTheme {
+        IdleState(
+            onSyncTapped = {},
+            onSkipTapped = {},
+        )
+    }
+}
+
+@Preview(name = "Syncing", showBackground = true, backgroundColor = 0xFFEFE8D6)
+@Composable
+private fun PreviewSyncingState() {
+    SketchlyTheme {
+        SyncingState()
+    }
+}
+
+@Preview(name = "Success — 3 friends", showBackground = true, backgroundColor = 0xFFEFE8D6)
+@Composable
+private fun PreviewSuccessState() {
+    SketchlyTheme {
+        SuccessState(
+            matchedCount = previewContacts.size,
+            contacts = previewContacts,
+            onContinue = {},
+        )
+    }
+}
+
+@Preview(name = "Success — No matches", showBackground = true, backgroundColor = 0xFFEFE8D6)
+@Composable
+private fun PreviewSuccessEmptyState() {
+    SketchlyTheme {
+        SuccessState(
+            matchedCount = 0,
+            contacts = emptyList(),
+            onContinue = {},
+        )
+    }
+}
+
+@Preview(name = "Permission Denied", showBackground = true, backgroundColor = 0xFFEFE8D6)
+@Composable
+private fun PreviewPermissionDeniedState() {
+    SketchlyTheme {
+        PermissionDeniedState(
+            onSkipTapped = {},
+        )
+    }
+}
+
+@Preview(name = "Error — Rate limit", showBackground = true, backgroundColor = 0xFFEFE8D6)
+@Composable
+private fun PreviewErrorState() {
+    SketchlyTheme {
+        ErrorState(
+            message = "Contact sync limit reached. Try again in 24 hours.",
+            onRetry = {},
+            onSkip = {},
+        )
+    }
+}
+
+@Preview(name = "Contact Row", showBackground = true, backgroundColor = 0xFFEFE8D6)
+@Composable
+private fun PreviewContactRow() {
+    SketchlyTheme {
+        Box(modifier = Modifier.padding(16.dp)) {
+            ContactRow(contact = previewContacts.first())
         }
     }
 }

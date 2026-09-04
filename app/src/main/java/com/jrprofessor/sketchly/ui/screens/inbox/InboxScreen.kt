@@ -38,15 +38,17 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jrprofessor.sketchly.data.model.Sketch
 import com.jrprofessor.sketchly.ui.components.InboxSkeletonList
 import com.jrprofessor.sketchly.ui.components.SketchlyThumbnail
 import com.jrprofessor.sketchly.ui.theme.NoteCardShape
 import com.jrprofessor.sketchly.ui.theme.PaperIvory
 import com.jrprofessor.sketchly.ui.theme.PillShape
+import com.jrprofessor.sketchly.ui.theme.SketchlyTheme
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -62,6 +64,28 @@ fun InboxScreen(
     val isInitialLoading by viewModel.isInitialLoading.collectAsStateWithLifecycle()
     val isOnline by viewModel.isOnline.collectAsStateWithLifecycle()
 
+    InboxScreenContent(
+        sketches = sketches,
+        unreadCount = unreadCount,
+        isInitialLoading = isInitialLoading,
+        isOnline = isOnline,
+        onSketchTap = { id ->
+            viewModel.markAsRead(id)
+            onSketchTap(id)
+        },
+        onDrawTap = onDrawTap,
+    )
+}
+
+@Composable
+fun InboxScreenContent(
+    sketches: List<Sketch>,
+    unreadCount: Int,
+    isInitialLoading: Boolean,
+    isOnline: Boolean,
+    onSketchTap: (String) -> Unit,
+    onDrawTap: () -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -233,15 +257,59 @@ fun InboxScreen(
                     items(sketches, key = { it.id }) { sketch ->
                         InboxSketchCard(
                             sketch = sketch,
-                            onClick = {
-                                viewModel.markAsRead(sketch.id)
-                                onSketchTap(sketch.id)
-                            },
+                            onClick = { onSketchTap(sketch.id) },
                         )
                     }
                 }
             }
         }
+    }
+}
+
+// ── Previews ──
+
+@Preview(name = "Inbox — Empty", showBackground = true)
+@Composable
+private fun InboxScreenEmptyPreview() {
+    SketchlyTheme {
+        InboxScreenContent(
+            sketches = emptyList(),
+            unreadCount = 0,
+            isInitialLoading = false,
+            isOnline = true,
+            onSketchTap = {},
+            onDrawTap = {},
+        )
+    }
+}
+
+@Preview(name = "Inbox — Loading", showBackground = true)
+@Composable
+private fun InboxScreenLoadingPreview() {
+    SketchlyTheme {
+        InboxScreenContent(
+            sketches = emptyList(),
+            unreadCount = 0,
+            isInitialLoading = true,
+            isOnline = true,
+            onSketchTap = {},
+            onDrawTap = {},
+        )
+    }
+}
+
+@Preview(name = "Inbox — Offline Banner", showBackground = true)
+@Composable
+private fun InboxScreenOfflinePreview() {
+    SketchlyTheme {
+        InboxScreenContent(
+            sketches = emptyList(),
+            unreadCount = 0,
+            isInitialLoading = false,
+            isOnline = false,
+            onSketchTap = {},
+            onDrawTap = {},
+        )
     }
 }
 

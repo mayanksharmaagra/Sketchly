@@ -46,10 +46,11 @@ data class DrawUiState(
     val selectedColor: Color = InkDefault,
     val selectedThickness: Float = 4f,
     val canSend: Boolean = false,
-    val isRecipientPickerOpen: Boolean = false,
+    // Send-to flow
     val selectedContactIds: Set<String> = emptySet(),
     val isSending: Boolean = false,
-    val sendSuccessMessage: String? = null,
+    val showSentDialog: Boolean = false,
+    val sentToNames: List<String> = emptyList(),
     val errorMessage: String? = null,
 )
 
@@ -169,20 +170,16 @@ class DrawViewModel @Inject constructor(
         }
     }
 
-    // ── Recipient Picker & Send Flow ──
+    // ── Send Flow ──
 
-    fun openRecipientPicker() {
+    fun dismissSentDialog() {
         _uiState.update {
             it.copy(
-                isRecipientPickerOpen = true,
-                sendSuccessMessage = null,
-                errorMessage = null,
+                showSentDialog = false,
+                sentToNames = emptyList(),
+                selectedContactIds = emptySet(),
             )
         }
-    }
-
-    fun closeRecipientPicker() {
-        _uiState.update { it.copy(isRecipientPickerOpen = false) }
     }
 
     fun toggleContactSelection(contactId: String) {
@@ -229,15 +226,18 @@ class DrawViewModel @Inject constructor(
 
             result.fold(
                 onSuccess = {
+                    // Resolve names for the confirmation dialog
+                    val names = contacts.value
+                        .filter { it.id in state.selectedContactIds }
+                        .map { it.displayName }
                     _uiState.update {
                         it.copy(
                             isSending = false,
-                            isRecipientPickerOpen = false,
                             strokes = emptyList(),
                             currentStroke = null,
                             canSend = false,
-                            selectedContactIds = emptySet(),
-                            sendSuccessMessage = "Sketch sent!",
+                            showSentDialog = true,
+                            sentToNames = names,
                         )
                     }
                     onSent()

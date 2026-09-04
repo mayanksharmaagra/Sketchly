@@ -1,9 +1,11 @@
 package com.jrprofessor.sketchly.ui.screens.auth
 
 import android.app.Activity
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.messaging.FirebaseMessaging
 import com.jrprofessor.sketchly.data.repository.AuthRepository
 import com.jrprofessor.sketchly.utils.getCountryPhoneCode
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -15,22 +17,55 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlin.coroutines.suspendCoroutine
 
 // ─────────────────────────────────────────────
 // UI State
 // ─────────────────────────────────────────────
 
+/**
+ * Username check result for live validation feedback in ProfileSetupScreen.
+ */
+enum class UsernameStatus {
+    IDLE,       // not yet checked (empty or too short)
+    CHECKING,   // Firestore query in-flight
+    AVAILABLE,  // unique — user can proceed
+    TAKEN,      // already in use — show inline error
+    INVALID,    // fails format validation
+}
+
 data class AuthUiState(
     // ── Auth mode ───────────────────────────
+    /** V1: always true (phone only). Email toggle is hidden in V1 UI but logic kept for V2. */
     val isSignUp: Boolean = true,
     val isPhoneMode: Boolean = true,
 
     // ── Input fields ─────────────────────────
+    /** V2 / hidden in V1 UI — kept for email auth logic */
     val email: String = "",
+    /** V2 / hidden in V1 UI — kept for email auth logic */
     val password: String = "",
     val displayName: String = "",
     val phoneNumber: String = "",
     val countryCode: String = "+91",
+
+    // ── Profile setup step (username) ────────
+    /**
+     * Username chosen in ProfileSetupScreen.
+     * Must be 3–20 chars, alphanumeric + underscore, stored lowercase.
+     * SRS FR-1.4.
+     */
+    val username: String = "",
+    val usernameStatus: UsernameStatus = UsernameStatus.IDLE,
+
+    // ── Routing ──────────────────────────────
+    /**
+     * Set to true after phone OTP verify when Firestore shows no username yet.
+     * NavGraph uses this to route to ProfileSetupScreen (new) vs Draw (returning).
+     */
+    val isNewUser: Boolean = false,
 
     // ── OTP state ───────────────────────────
     val otpCode: String = "",
@@ -39,8 +74,12 @@ data class AuthUiState(
     val verificationId: String? = null,   // Firebase phone verificationId
     val resendCountdown: Int = 0,
 
-    // ── Name-entry step (phone flow only) ─────
-    /** True after phone OTP is verified; shows the name-entry screen before navigating to Draw. */
+    // ── Name-entry step (kept for internal state transitions) ─────────
+    /**
+     * Kept for compatibility with OTP flow transitions.
+     * In V1, profile setup is a separate screen (ProfileSetupScreen), not
+     * an inline step in AuthContent.
+     */
     val isNameEntry: Boolean = false,
 
     // ── Async state ──────────────────────────
@@ -67,6 +106,10 @@ class AuthViewModel @Inject constructor(
     val uiState: StateFlow<AuthUiState> = _uiState.asStateFlow()
 
     private var countdownJob: Job? = null
+    private var usernameCheckJob: Job? = null
+    private val _fcmToken = MutableStateFlow<String?>(null)
+    val fcmToken: StateFlow<String?> = _fcmToken.asStateFlow()
+
 
     init {
         viewModelScope.launch {
@@ -74,9 +117,12 @@ class AuthViewModel @Inject constructor(
                 _uiState.update { it.copy(currentUser = user) }
             }
         }
+        fetchFcmToken()
     }
 
     // ── Mode toggles ──────────────────────────────
+    // NOTE: toggleAuthMode and onSignUpChanged are preserved for V2 email auth.
+    // The V1 UI does not render the toggle button, but the logic stays.
 
     fun toggleAuthMode() {
         _uiState.update {
@@ -126,11 +172,144 @@ class AuthViewModel @Inject constructor(
         _uiState.update { it.copy(otpDigits = updated, errorMessage = null) }
     }
 
-    // ── Email Auth (Sign Up / Sign In without OTP) ─
+    // ── Username handling (ProfileSetupScreen) ────
+
+    private val usernameRegex = Regex("^[a-zA-Z0-9_]{3,20}$")
+
+    /**
+     * Called whenever the username field changes.
+     * Debounces uniqueness checks (600ms) to avoid hammering Firestore.
+     * SRS FR-1.4: 3–20 chars, alphanumeric + underscore, case-insensitive.
+     */
+    fun onUsernameChanged(raw: String) {
+        // Strip leading @ if user types it
+        val cleaned = raw.removePrefix("@").take(20)
+        _uiState.update {
+            it.copy(
+                username = cleaned,
+                usernameStatus = when {
+                    cleaned.length < 3 -> UsernameStatus.IDLE
+                    !usernameRegex.matches(cleaned) -> UsernameStatus.INVALID
+                    else -> UsernameStatus.CHECKING
+                },
+                errorMessage = null,
+            )
+        }
+
+        usernameCheckJob?.cancel()
+        if (cleaned.length >= 3 && usernameRegex.matches(cleaned)) {
+            usernameCheckJob = viewModelScope.launch {
+                delay(600L)
+                checkUsernameAvailability(cleaned)
+            }
+        }
+    }
+
+    private suspend fun checkUsernameAvailability(username: String) {
+        val available = authRepository.checkUsernameAvailable(username)
+        _uiState.update {
+            it.copy(
+                usernameStatus = if (available) UsernameStatus.AVAILABLE else UsernameStatus.TAKEN,
+            )
+        }
+    }
+
+    // ── Profile Setup (after OTP) ─────────────────
+
+    /**
+     * Saves the completed profile (displayName + username + phone hash) to Firestore.
+     * Called from ProfileSetupScreen on "Continue" tap.
+     * SRS FR-1.3, FR-1.4, FR-2.2.
+     */
+    fun saveUserProfile(onSuccess: () -> Unit) {
+        val state = _uiState.value
+        val name = state.displayName.trim()
+        val username = state.username.trim()
+
+        // Validate locally before network call
+        if (name.isBlank()) {
+            _uiState.update { it.copy(errorMessage = "Please enter your full name.") }
+            return
+        }
+        if (username.length < 3 || !usernameRegex.matches(username)) {
+            _uiState.update { it.copy(errorMessage = "Username must be 3–20 characters (letters, numbers, underscore).") }
+            return
+        }
+        if (state.usernameStatus != UsernameStatus.AVAILABLE) {
+            _uiState.update { it.copy(errorMessage = "Please choose a unique username.") }
+            return
+        }
+
+        _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+
+        viewModelScope.launch {
+            try {
+                val uid = authRepository.currentUserId
+                if (uid != null) {
+                    val fullPhone = "${state.countryCode}${state.phoneNumber}"
+                    authRepository.saveUserProfile(
+                        uid = uid,
+                        displayName = name,
+                        username = username,
+                        rawPhoneE164 = fullPhone.takeIf { state.isPhoneMode && state.phoneNumber.isNotBlank() }.orEmpty(),
+                        fcmToken=fcmToken.value.orEmpty()
+                    )
+                }
+                _uiState.update { it.copy(isLoading = false) }
+                onSuccess()
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        errorMessage = e.localizedMessage ?: "Failed to save profile.",
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Legacy: saves only display name.
+     * Kept for backward compatibility. Prefer [saveUserProfile] for new phone users.
+     */
+    fun saveDisplayName(onSuccess: () -> Unit) {
+        val state = _uiState.value
+        val name = state.displayName.trim()
+        if (name.isBlank()) {
+            _uiState.update { it.copy(errorMessage = "Please enter your name.") }
+            return
+        }
+
+        _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+
+        viewModelScope.launch {
+            try {
+                val uid = authRepository.currentUserId
+                if (uid != null) {
+                    val fullPhone = "${state.countryCode}${state.phoneNumber}".takeIf {
+                        state.isPhoneMode && state.phoneNumber.isNotBlank()
+                    }.orEmpty()
+                    authRepository.updateDisplayName(uid, name, fullPhone)
+                }
+                _uiState.update { it.copy(isLoading = false) }
+                onSuccess()
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        errorMessage = e.localizedMessage ?: "Failed to save name.",
+                    )
+                }
+            }
+        }
+    }
+
+    // ── Email Auth (V2 — not exposed in V1 UI) ─────
 
     /**
      * For Sign In: email + password → direct sign-in, no OTP needed.
      * For Sign Up: creates account → then triggers email OTP verification.
+     * (V2 scope — logic preserved, not called from V1 UI)
      */
     fun submitEmailAuth(
         onSuccess: () -> Unit,
@@ -190,7 +369,7 @@ class AuthViewModel @Inject constructor(
     // ── Phone OTP ─────────────────────────────────
 
     /** Step 1 — send SMS OTP */
-    fun sendPhoneOtp(activity: Activity, onOtpSent: () -> Unit) {
+    fun sendPhoneOtp(activity: Activity, onOtpSent: () -> Unit = {}) {
         val state = _uiState.value
         val fullPhone = "${state.countryCode}${state.phoneNumber}"
         if (state.phoneNumber.length < 10) {
@@ -217,7 +396,7 @@ class AuthViewModel @Inject constructor(
             onAutoVerified = { user ->
                 // Firebase auto-verified (instant verification on some devices)
                 _uiState.update { it.copy(isLoading = false, currentUser = user) }
-                onOtpSent() // still navigate to OTP screen briefly before success
+                onOtpSent()
             },
             onError = { error ->
                 _uiState.update {
@@ -227,10 +406,13 @@ class AuthViewModel @Inject constructor(
         )
     }
 
-    /** Step 2 — verify the entered phone OTP.
-     *  On success, transitions to the name-entry step instead of navigating directly.
+    /**
+     * Step 2 — verify the entered phone OTP.
+     * On success: if new user → navigates to ProfileSetupScreen.
+     *             if returning user → navigates directly to Draw/Inbox.
+     * The NavGraph reads [AuthUiState.isNewUser] to decide routing.
      */
-    fun verifyPhoneOtp(onSuccess: () -> Unit) {
+    fun verifyPhoneOtp(onNewUser: () -> Unit, onReturningUser: () -> Unit) {
         val state = _uiState.value
         val code = state.otpDigits.joinToString("")
         if (code.length < 6) {
@@ -244,11 +426,26 @@ class AuthViewModel @Inject constructor(
             val result = authRepository.verifyPhoneOtp(
                 verificationId = state.verificationId ?: "",
                 smsCode = code,
+                rawPhoneE164 = "${state.countryCode}${state.phoneNumber}",
             )
             result.fold(
-                onSuccess = {
-                    // Show name-entry screen before proceeding to the app
-                    _uiState.update { it.copy(isLoading = false, isNameEntry = true) }
+                onSuccess = { (firebaseUser, isNewUser) ->
+                    _uiState.update { it.copy(isLoading = false, isNewUser = isNewUser) }
+
+                    if (!isNewUser) {
+                        // Returning user → update FCM token in Firestore immediately.
+                        // New users get their token saved inside saveUserProfile() instead.
+                        val token = _fcmToken.value.orEmpty()
+                        if (token.isNotBlank()) {
+                            authRepository.updateFcmToken(
+                                uid = firebaseUser.uid,
+                                fcmToken = token,
+                            )
+                        }
+                        onReturningUser()
+                    } else {
+                        onNewUser()
+                    }
                 },
                 onFailure = { error ->
                     _uiState.update {
@@ -263,40 +460,22 @@ class AuthViewModel @Inject constructor(
         }
     }
 
-    /** Called from the name-entry screen. Saves the display name to Firestore and proceeds. */
-    fun saveDisplayName(onSuccess: () -> Unit) {
-        val state = _uiState.value
-        val name = state.displayName.trim()
-        if (name.isBlank()) {
-            _uiState.update { it.copy(errorMessage = "Please enter your name.") }
-            return
-        }
+    // ── Unified verify dispatcher ─────────────────
+    // NOTE: verifyOtp is kept for callers that don't need new/returning distinction.
 
-        _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-
-        viewModelScope.launch {
-            try {
-                val uid = authRepository.currentUserId
-                if (uid != null) {
-                    val fullPhone = "${state.countryCode}${state.phoneNumber}".takeIf {
-                        state.isPhoneMode && state.phoneNumber.isNotBlank()
-                    }.orEmpty()
-                    authRepository.updateDisplayName(uid, name, fullPhone)
-                }
-                _uiState.update { it.copy(isLoading = false) }
-                onSuccess()
-            } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        errorMessage = e.localizedMessage ?: "Failed to save name.",
-                    )
-                }
-            }
+    fun verifyOtp(onSuccess: () -> Unit) {
+        if (_uiState.value.isPhoneMode) {
+            verifyPhoneOtp(
+                onNewUser = onSuccess,
+                onReturningUser = onSuccess,
+            )
+        } else {
+            verifyEmailOtp(onSuccess)
         }
     }
 
     // ── Email OTP ─────────────────────────────────
+    // NOTE: Full email OTP logic preserved for V2.
 
     /** Step 1 — send email OTP via Cloud Function */
     fun sendEmailOtp(onOtpSent: () -> Unit) {
@@ -362,20 +541,9 @@ class AuthViewModel @Inject constructor(
         }
     }
 
-    // ── Unified verify dispatcher ─────────────────
-
-    fun verifyOtp(onSuccess: () -> Unit) {
-        if (_uiState.value.isPhoneMode) {
-            // Phone mode: OTP success → name-entry step (onSuccess called from saveDisplayName)
-            verifyPhoneOtp(onSuccess)
-        } else {
-            verifyEmailOtp(onSuccess)
-        }
-    }
-
     // ── Resend ────────────────────────────────────
 
-    fun resendOtp(activity: Activity? = null, onOtpSent: () -> Unit) {
+    fun resendOtp(activity: Activity? = null, onOtpSent: () -> Unit = {}) {
         _uiState.update { it.copy(otpDigits = List(6) { "" }, errorMessage = null) }
         if (_uiState.value.isPhoneMode && activity != null) {
             sendPhoneOtp(activity, onOtpSent)
@@ -420,5 +588,26 @@ class AuthViewModel @Inject constructor(
     override fun onCleared() {
         super.onCleared()
         countdownJob?.cancel()
+        usernameCheckJob?.cancel()
+    }
+
+    fun fetchFcmToken() {
+        viewModelScope.launch {
+            try {
+                val token = suspendCoroutine<String> { continuation ->
+                    FirebaseMessaging.getInstance().token
+                        .addOnSuccessListener { continuation.resume(it) }
+                        .addOnFailureListener { continuation.resumeWithException(it) }
+                }
+                _fcmToken.value = token
+
+                // Save to Firestore so server can send push to this device
+                Log.e("TAG", "fetchFcmToken: "+token )
+//                authRepository.saveFcmToken(token)
+
+            } catch (e: Exception) {
+                _fcmToken.value = null
+            }
+        }
     }
 }

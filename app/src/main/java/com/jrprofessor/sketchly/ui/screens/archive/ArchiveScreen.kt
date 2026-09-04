@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -37,12 +36,12 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
-import androidx.hilt.navigation.compose.hiltViewModel
-import dagger.hilt.android.lifecycle.HiltViewModel
 import com.jrprofessor.sketchly.data.local.SenderInfo
 import com.jrprofessor.sketchly.data.model.Sketch
 import com.jrprofessor.sketchly.data.repository.HistoryFilter
@@ -50,6 +49,12 @@ import com.jrprofessor.sketchly.data.repository.SketchlyRepository
 import com.jrprofessor.sketchly.ui.components.SketchlyThumbnail
 import com.jrprofessor.sketchly.ui.theme.NoteCardShape
 import com.jrprofessor.sketchly.ui.theme.PaperIvory
+import com.jrprofessor.sketchly.ui.theme.SketchlyTheme
+import dagger.hilt.android.lifecycle.HiltViewModel
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -59,10 +64,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Date
-import java.util.Locale
 
 // ── Date group label logic (SRS FR-8.1) ──
 
@@ -181,6 +182,25 @@ fun ArchiveScreen(
     val filter by viewModel.filter.collectAsStateWithLifecycle()
     val senders by viewModel.senders.collectAsStateWithLifecycle()
 
+    ArchiveScreenContent(
+        grouped = grouped,
+        filter = filter,
+        senders = senders,
+        onSketchTap = onSketchTap,
+        onFilterChange = viewModel::setFilter,
+        onLoadMore = viewModel::loadMore,
+    )
+}
+
+@Composable
+fun ArchiveScreenContent(
+    grouped: Map<String, List<Sketch>>,
+    filter: HistoryFilter,
+    senders: List<SenderInfo>,
+    onSketchTap: (String) -> Unit,
+    onFilterChange: (HistoryFilter) -> Unit,
+    onLoadMore: () -> Unit,
+) {
     val listState = rememberLazyListState()
 
     // Detect scroll-to-bottom to trigger pagination (SRS FR-8.3)
@@ -192,7 +212,7 @@ fun ArchiveScreen(
         }
     }
     LaunchedEffect(isAtBottom) {
-        if (isAtBottom) viewModel.loadMore()
+        if (isAtBottom) onLoadMore()
     }
 
     Column(
@@ -248,21 +268,21 @@ fun ArchiveScreen(
                 HistoryFilterChip(
                     label = "All",
                     selected = filter == HistoryFilter.All,
-                    onClick = { viewModel.setFilter(HistoryFilter.All) },
+                    onClick = { onFilterChange(HistoryFilter.All) },
                 )
             }
             item {
                 HistoryFilterChip(
                     label = "Sent",
                     selected = filter == HistoryFilter.Sent,
-                    onClick = { viewModel.setFilter(HistoryFilter.Sent) },
+                    onClick = { onFilterChange(HistoryFilter.Sent) },
                 )
             }
             item {
                 HistoryFilterChip(
                     label = "Received",
                     selected = filter == HistoryFilter.Received,
-                    onClick = { viewModel.setFilter(HistoryFilter.Received) },
+                    onClick = { onFilterChange(HistoryFilter.Received) },
                 )
             }
             // One chip per unique sender contact (derived from local Room cache)
@@ -273,7 +293,7 @@ fun ArchiveScreen(
                     label = displayName,
                     selected = filter is HistoryFilter.ByContact &&
                         (filter as HistoryFilter.ByContact).senderId == sender.senderId,
-                    onClick = { viewModel.setFilter(HistoryFilter.ByContact(sender.senderId)) },
+                    onClick = { onFilterChange(HistoryFilter.ByContact(sender.senderId)) },
                 )
             }
         }
@@ -297,7 +317,7 @@ fun ArchiveScreen(
 
                     // 2-column grid inside LazyColumn using manual row chunking (avoids nested LazyGrid)
                     val rows = sketches.chunked(2)
-                    items(rows, key = { row -> "row_${row.first().id}" }) { rowItems ->
+                    items(rows, key = { row -> "row_${dateLabel}_${row.joinToString("_") { it.id }}" }) { rowItems ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -322,6 +342,43 @@ fun ArchiveScreen(
         }
     }
 }
+
+// ── Previews ──
+
+@Preview(name = "Archive — Empty", showBackground = true)
+@Composable
+private fun ArchiveScreenEmptyPreview() {
+    SketchlyTheme {
+        ArchiveScreenContent(
+            grouped = emptyMap(),
+            filter = HistoryFilter.All,
+            senders = emptyList(),
+            onSketchTap = {},
+            onFilterChange = {},
+            onLoadMore = {},
+        )
+    }
+}
+
+@Preview(name = "Archive — With Items", showBackground = true)
+@Composable
+private fun ArchiveScreenPopulatedPreview() {
+    val fakeSketches = listOf(
+        Sketch(id = "1", senderId = "uid1", senderDisplayName = "Alice", recipientIds = emptyList(), strokes = emptyList(), createdAt = System.currentTimeMillis(), isRead = true),
+        Sketch(id = "2", senderId = "uid2", senderDisplayName = "Bob",   recipientIds = emptyList(), strokes = emptyList(), createdAt = System.currentTimeMillis(), isRead = false),
+    )
+    SketchlyTheme {
+        ArchiveScreenContent(
+            grouped = mapOf("Today" to fakeSketches),
+            filter = HistoryFilter.All,
+            senders = listOf(SenderInfo(senderId = "uid1", senderDisplayName = "Alice")),
+            onSketchTap = {},
+            onFilterChange = {},
+            onLoadMore = {},
+        )
+    }
+}
+
 
 @Composable
 private fun DateSectionHeader(label: String) {

@@ -1,9 +1,10 @@
-const { onDocumentCreated } = require("firebase-functions/v2/firestore");
-const { onDocumentWritten } = require("firebase-functions/v2/firestore");
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
-const { initializeApp } = require("firebase-admin/app");
-const { getFirestore, FieldValue } = require("firebase-admin/firestore");
-const { getMessaging } = require("firebase-admin/messaging");
+const {onDocumentCreated} = require("firebase-functions/v2/firestore");
+const {onDocumentWritten} = require("firebase-functions/v2/firestore");
+const {onCall, HttpsError} = require("firebase-functions/v2/https");
+const {onSchedule} = require("firebase-functions/v2/scheduler");
+const {initializeApp} = require("firebase-admin/app");
+const {getFirestore, FieldValue, Timestamp} = require("firebase-admin/firestore");
+const {getMessaging} = require("firebase-admin/messaging");
 const nodemailer = require("nodemailer");
 const crypto = require("crypto");
 
@@ -13,8 +14,8 @@ const crypto = require("crypto");
 const createTransporter = () => nodemailer.createTransport({
   service: "gmail",
   auth: {
-    user: process.env.SMTP_USER,   // e.g. sketchly.noreply@gmail.com
-    pass: process.env.SMTP_PASS,   // App Password (not account password)
+    user: process.env.SMTP_USER, // e.g. sketchly.noreply@gmail.com
+    pass: process.env.SMTP_PASS, // App Password (not account password)
   },
 });
 
@@ -49,7 +50,7 @@ exports.onScribbleCreate = onDocumentCreated(
       return;
     }
 
-    const { scribbleId } = event.params;
+    const {scribbleId} = event.params;
     const senderId = scribble.senderId;
     const recipientIds = scribble.recipientIds ?? [];
 
@@ -94,7 +95,7 @@ exports.onScribbleCreate = onDocumentCreated(
 
     await Promise.allSettled(sendPromises);
     console.log(`onScribbleCreate: fan-out complete for scribble ${scribbleId}`);
-  }
+  },
 );
 
 /**
@@ -201,7 +202,7 @@ exports.onReactionCreate = onDocumentWritten(
     } catch (err) {
       console.error("onReactionCreate: failed to send reaction FCM:", err);
     }
-  }
+  },
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -220,7 +221,7 @@ exports.onReactionCreate = onDocumentWritten(
  * (client should wait for countdown to finish before calling resend).
  */
 exports.sendEmailOtp = onCall(
-  { region: "us-central1", enforceAppCheck: false },
+  {region: "us-central1", enforceAppCheck: false},
   async (request) => {
     const email = request.data?.email;
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -233,11 +234,11 @@ exports.sendEmailOtp = onCall(
     // Check for a still-valid OTP (optional rate-limiting)
     const existing = await otpRef.get();
     if (existing.exists) {
-      const { expiresAt } = existing.data();
+      const {expiresAt} = existing.data();
       if (expiresAt && expiresAt.toMillis() > Date.now()) {
         // OTP still valid — don't spam. Client should use resend countdown.
         console.log(`sendEmailOtp: valid OTP already exists for ${email}, skipping resend.`);
-        return { success: true };
+        return {success: true};
       }
     }
 
@@ -287,8 +288,8 @@ exports.sendEmailOtp = onCall(
     });
 
     console.log(`sendEmailOtp: OTP sent to ${email}`);
-    return { success: true };
-  }
+    return {success: true};
+  },
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -306,9 +307,9 @@ exports.sendEmailOtp = onCall(
  * Throws HttpsError on failure so the Android client receives a typed error.
  */
 exports.verifyEmailOtp = onCall(
-  { region: "us-central1", enforceAppCheck: false },
+  {region: "us-central1", enforceAppCheck: false},
   async (request) => {
-    const { email, otp } = request.data ?? {};
+    const {email, otp} = request.data ?? {};
     if (!email || !otp) {
       throw new HttpsError("invalid-argument", "email and otp are required.");
     }
@@ -321,7 +322,7 @@ exports.verifyEmailOtp = onCall(
       throw new HttpsError("not-found", "No OTP found for this email. Please request a new code.");
     }
 
-    const { hash, expiresAtMs } = doc.data();
+    const {hash, expiresAtMs} = doc.data();
 
     // Expiry check
     if (!expiresAtMs || Date.now() > expiresAtMs) {
@@ -344,6 +345,412 @@ exports.verifyEmailOtp = onCall(
     await otpRef.delete();
 
     console.log(`verifyEmailOtp: OTP verified for ${email}`);
-    return { success: true };
-  }
+    return {success: true};
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// matchContactsByHash — contact sync callable
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Callable: matchContactsByHash({ hashes: string[] })
+ *
+ * Receives SHA-256 hashed phone numbers from the Android client,
+ * matches them against registered users in Firestore, and returns
+ * ONLY public profile fields of matched users.
+ *
+ * Security:
+ *  1. Firebase Auth required — unauthenticated calls rejected.
+ *  2. Rate limiting — max 5 syncs per user per 24-hour window.
+ *  3. Batch size cap — max 500 hashes per call.
+ *  4. Hash format validated (lowercase SHA-256, 64 hex chars).
+ *  5. Phone hashes are NEVER returned to the client.
+ *  6. Caller is excluded from their own results.
+ *  7. Only users with isSearchable = true are returned.
+ */
+exports.matchContactsByHash = onCall(
+  {region: "us-central1", enforceAppCheck: false},
+  async (request) => {
+    // ── 1. Auth check ──────────────────────────────────────────
+    if (!request.auth) {
+      throw new HttpsError(
+        "unauthenticated",
+        "You must be signed in to sync contacts.",
+      );
+    }
+    const callerUid = request.auth.uid;
+
+    // ── 2. Input validation ─────────────────────────────────────
+    const hashes = request.data?.hashes;
+
+    if (!Array.isArray(hashes)) {
+      throw new HttpsError("invalid-argument", "hashes must be an array.");
+    }
+
+    if (hashes.length === 0) {
+      return {matches: []};
+    }
+
+    if (hashes.length > 500) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Maximum 500 hashes per request.",
+      );
+    }
+
+    // Validate each entry is a lowercase SHA-256 hex string (64 chars)
+    const validHashPattern = /^[a-f0-9]{64}$/;
+    const invalidHash = hashes.find((h) => !validHashPattern.test(h));
+    if (invalidHash) {
+      throw new HttpsError(
+        "invalid-argument",
+        "All hashes must be valid SHA-256 hex strings.",
+      );
+    }
+
+    const db = getFirestore();
+
+    // ── 3. Rate limiting (max 5 syncs per user per 24 h) ────────
+    const rateLimitRef = db
+      .collection("rateLimits")
+      .doc(`contactSync_${callerUid}`);
+
+    const rateLimitDoc = await rateLimitRef.get();
+    const now = Date.now();
+    const oneDayMs = 24 * 60 * 60 * 1000;
+
+    if (rateLimitDoc.exists) {
+      const {count, windowStart} = rateLimitDoc.data();
+      if (now - windowStart < oneDayMs && count >= 5) {
+        throw new HttpsError(
+          "resource-exhausted",
+          "Contact sync limit reached. Try again in 24 hours.",
+        );
+      }
+      if (now - windowStart < oneDayMs) {
+        await rateLimitRef.update({count: count + 1});
+      } else {
+        // New day — reset window
+        await rateLimitRef.set({count: 1, windowStart: now});
+      }
+    } else {
+      // First sync ever
+      await rateLimitRef.set({count: 1, windowStart: now});
+    }
+
+    // ── 4. Query Firestore in chunks of 30 (whereIn limit) ──────
+    const CHUNK_SIZE = 30;
+    const chunks = [];
+    for (let i = 0; i < hashes.length; i += CHUNK_SIZE) {
+      chunks.push(hashes.slice(i, i + CHUNK_SIZE));
+    }
+
+    const queryPromises = chunks.map((chunk) =>
+      db
+        .collection("users")
+        .where("phoneNumberHash", "in", chunk)
+        .where("isSearchable", "==", true)
+        // Only return public fields — hash is intentionally omitted
+        .select("uid", "displayName", "username", "avatarUrl", "phoneLastFour")
+        .get(),
+    );
+
+    const queryResults = await Promise.all(queryPromises);
+
+    // ── 5. Assemble deduplicated results ─────────────────────────
+    const matches = [];
+    const seenUids = new Set();
+
+    queryResults.forEach((snapshot) => {
+      snapshot.docs.forEach((doc) => {
+        const userData = doc.data();
+        const uid = userData.uid || doc.id;
+
+        // Exclude caller from their own results
+        if (uid === callerUid) return;
+
+        // Deduplicate (a number may appear multiple times in contacts)
+        if (seenUids.has(uid)) return;
+        seenUids.add(uid);
+
+        matches.push({
+          uid,
+          displayName: userData.displayName || "Sketchly User",
+          username: userData.username || "",
+          avatarUrl: userData.avatarUrl || null,
+          phoneLastFour: userData.phoneLastFour || null,
+          // phoneNumberHash intentionally excluded
+        });
+      });
+    });
+
+    // ── 6. Return ─────────────────────────────────────────────────
+    console.log(
+      `matchContactsByHash: caller=${callerUid}, hashes=${hashes.length}, matches=${matches.length}`,
+    );
+
+    return {matches};
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// onFollowRequestCreate — notify the target user of a new follow request
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Triggered when a new document is created in `followRequests/{requestId}`.
+ *
+ * Expected doc shape:
+ *   { fromUserId, toUserId, fromUserName, status: "pending", createdAt }
+ *
+ * Flow:
+ *   1. Read fromUserId, toUserId, fromUserName from the new doc.
+ *   2. Fetch toUser's fcmToken from users/{toUserId}.
+ *   3. Send a visible FCM notification to the target user.
+ */
+exports.onFollowRequestCreate = onDocumentCreated(
+  {
+    document: "followRequests/{requestId}",
+    region: "us-central1",
+  },
+  async (event) => {
+    const request = event.data?.data();
+    if (!request) {
+      console.warn("onFollowRequestCreate: no data in snapshot, skipping.");
+      return;
+    }
+
+    const {fromUserId, toUserId, fromUserName} = request;
+
+    if (!fromUserId || !toUserId) {
+      console.warn("onFollowRequestCreate: missing fromUserId or toUserId, skipping.");
+      return;
+    }
+
+    const db = getFirestore();
+    const messaging = getMessaging();
+
+    // Fetch the target user's FCM token
+    let fcmToken;
+    try {
+      const toUserDoc = await db.collection("users").doc(toUserId).get();
+      fcmToken = toUserDoc.data()?.fcmToken;
+    } catch (err) {
+      console.error("onFollowRequestCreate: failed to fetch target FCM token:", err);
+      return;
+    }
+
+    if (!fcmToken) {
+      console.log(`onFollowRequestCreate: no FCM token for user ${toUserId}, skipping.`);
+      return;
+    }
+
+    try {
+      const senderName = fromUserName || "Someone";
+      await messaging.send({
+        token: fcmToken,
+        notification: {
+          title: "New follow request",
+          body: `${senderName} wants to follow you on Sketchly`,
+        },
+        data: {
+          type: "follow_request",
+          fromUserId,
+          requestId: event.params.requestId,
+        },
+        android: {
+          priority: "high",
+          notification: {
+            channelId: "social", // Client must create this notification channel
+          },
+        },
+      });
+      console.log(`onFollowRequestCreate: notification sent to ${toUserId}`);
+    } catch (err) {
+      console.error("onFollowRequestCreate: failed to send FCM:", err);
+    }
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// onFollowRequestAccept — create connection docs for both users + notify sender
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Triggered on any write to `followRequests/{requestId}`.
+ * Only acts when `status` transitions to "accepted".
+ *
+ * Flow:
+ *   1. Confirm status changed from non-accepted → "accepted".
+ *   2. Create `connections/{fromUserId}_{toUserId}` and the reverse doc.
+ *   3. Send FCM notification to fromUserId (request sender) to let them know
+ *      their request was accepted.
+ */
+exports.onFollowRequestAccept = onDocumentWritten(
+  {
+    document: "followRequests/{requestId}",
+    region: "us-central1",
+  },
+  async (event) => {
+    const before = event.data?.before?.data();
+    const after = event.data?.after?.data();
+
+    // Guard: only proceed when status flips to "accepted"
+    if (!after || after.status !== "accepted") return;
+    if (before?.status === "accepted") return; // Already processed
+
+    const {fromUserId, toUserId} = after;
+
+    if (!fromUserId || !toUserId) {
+      console.warn("onFollowRequestAccept: missing user IDs, skipping.");
+      return;
+    }
+
+    const db = getFirestore();
+    const messaging = getMessaging();
+    const now = FieldValue.serverTimestamp();
+
+    // ── Create bidirectional connection docs ──────────────────────
+    const connectionId = `${fromUserId}_${toUserId}`;
+    const reverseId = `${toUserId}_${fromUserId}`;
+    const connectionsRef = db.collection("connections");
+
+    try {
+      const batch = db.batch();
+      batch.set(connectionsRef.doc(connectionId), {
+        userAId: fromUserId,
+        userBId: toUserId,
+        createdAt: now,
+      });
+      batch.set(connectionsRef.doc(reverseId), {
+        userAId: toUserId,
+        userBId: fromUserId,
+        createdAt: now,
+      });
+      await batch.commit();
+      console.log(`onFollowRequestAccept: connections created for ${fromUserId} ↔ ${toUserId}`);
+    } catch (err) {
+      console.error("onFollowRequestAccept: failed to create connection docs:", err);
+      // Continue to send notification even if Firestore write partially failed
+    }
+
+    // ── Notify the requester that their follow was accepted ───────
+    let fcmToken;
+    try {
+      const fromUserDoc = await db.collection("users").doc(fromUserId).get();
+      fcmToken = fromUserDoc.data()?.fcmToken;
+    } catch (err) {
+      console.error("onFollowRequestAccept: failed to fetch requester FCM token:", err);
+      return;
+    }
+
+    if (!fcmToken) {
+      console.log(`onFollowRequestAccept: no FCM token for ${fromUserId}, skipping notification.`);
+      return;
+    }
+
+    try {
+      const acceptorName = after.toUserName || "Someone";
+      await messaging.send({
+        token: fcmToken,
+        notification: {
+          title: "Follow request accepted",
+          body: `${acceptorName} accepted your follow request`,
+        },
+        data: {
+          type: "follow_accepted",
+          toUserId,
+          requestId: event.params.requestId,
+        },
+        android: {
+          priority: "normal",
+          notification: {
+            channelId: "social",
+          },
+        },
+      });
+      console.log(`onFollowRequestAccept: acceptance notification sent to ${fromUserId}`);
+    } catch (err) {
+      console.error("onFollowRequestAccept: failed to send acceptance FCM:", err);
+    }
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// purgeInactiveData — scheduled monthly data retention cleanup (Architecture §10)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Runs on the 1st of every month at 03:00 UTC.
+ *
+ * Cleans up:
+ *  1. `emailOtps` — expired OTP documents (expiresAtMs < now).
+ *  2. `rateLimits` — contactSync rate-limit windows older than 30 days.
+ *  3. `followRequests` — declined/cancelled requests older than 90 days.
+ *
+ * Each collection is processed in batches of 500 to stay within Firestore
+ * batch-write limits.
+ */
+exports.purgeInactiveData = onSchedule(
+  {
+    schedule: "0 3 1 * *", // 1st of every month at 03:00 UTC
+    timeZone: "UTC",
+    region: "us-central1",
+  },
+  async (_event) => {
+    const db = getFirestore();
+    const now = Date.now();
+    const BATCH_SIZE = 500;
+
+    let totalDeleted = 0;
+
+    /**
+     * Helper: delete all docs returned by a query, in batches of BATCH_SIZE.
+     * @param {FirebaseFirestore.Query} query - Firestore query to delete from.
+     * @param {string} label - Label for log output.
+     * @return {Promise<number>} Number of deleted documents.
+     */
+    async function batchDelete(query, label) {
+      let deleted = 0;
+      let snapshot = await query.limit(BATCH_SIZE).get();
+
+      while (!snapshot.empty) {
+        const batch = db.batch();
+        snapshot.docs.forEach((doc) => batch.delete(doc.ref));
+        await batch.commit();
+        deleted += snapshot.size;
+        if (snapshot.size < BATCH_SIZE) break;
+        snapshot = await query.limit(BATCH_SIZE).get();
+      }
+
+      console.log(`purgeInactiveData [${label}]: deleted ${deleted} docs`);
+      return deleted;
+    }
+
+    // ── 1. Expired email OTPs ──────────────────────────────────────
+    totalDeleted += await batchDelete(
+      db.collection("emailOtps").where("expiresAtMs", "<", now),
+      "emailOtps",
+    );
+
+    // ── 2. Stale rate-limit windows (older than 30 days) ──────────
+    const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
+    totalDeleted += await batchDelete(
+      db.collection("rateLimits").where("windowStart", "<", thirtyDaysAgo),
+      "rateLimits",
+    );
+
+    // ── 3. Old declined/cancelled follow requests (90+ days) ──────
+    const ninetyDaysAgo = Timestamp.fromMillis(now - 90 * 24 * 60 * 60 * 1000);
+    totalDeleted += await batchDelete(
+      db
+        .collection("followRequests")
+        .where("status", "in", ["declined", "cancelled"])
+        .where("createdAt", "<", ninetyDaysAgo),
+      "followRequests",
+    );
+
+    console.log(`purgeInactiveData: total docs deleted = ${totalDeleted}`);
+  },
 );

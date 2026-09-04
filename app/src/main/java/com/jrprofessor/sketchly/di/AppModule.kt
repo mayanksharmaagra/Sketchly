@@ -5,11 +5,13 @@ import androidx.work.WorkManager
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.functions.FirebaseFunctions
+import com.google.firebase.storage.FirebaseStorage
 import com.jrprofessor.sketchly.data.local.ContactDao
 import com.jrprofessor.sketchly.data.local.SketchlyDao
 import com.jrprofessor.sketchly.data.local.SketchlyDatabase
 import com.jrprofessor.sketchly.data.repository.AuthRepository
 import com.jrprofessor.sketchly.data.repository.ContactRepository
+import com.jrprofessor.sketchly.data.repository.EditProfileRepository
 import com.jrprofessor.sketchly.data.repository.SketchlyRepository
 import dagger.Module
 import dagger.Provides
@@ -36,6 +38,10 @@ object AppModule {
     @Singleton
     fun provideFirebaseFunctions(): FirebaseFunctions =
         FirebaseFunctions.getInstance("us-central1")
+
+    @Provides
+    @Singleton
+    fun provideFirebaseStorage(): FirebaseStorage = FirebaseStorage.getInstance()
 
     // ── Room Database ─────────────────────────────────────────────────────
 
@@ -81,7 +87,18 @@ object AppModule {
     @Provides
     @Singleton
     fun provideContactRepository(
+        @ApplicationContext context: Context,
         contactDao: ContactDao,
         firestore: FirebaseFirestore,
-    ): ContactRepository = ContactRepository(contactDao, firestore)
+        auth: FirebaseAuth,
+        functions: FirebaseFunctions,
+    ): ContactRepository = ContactRepository(contactDao, firestore, auth, functions, context)
+
+    @Provides
+    @Singleton
+    fun provideEditProfileRepository(
+        auth: FirebaseAuth,
+        firestore: FirebaseFirestore,
+        storage: FirebaseStorage,
+    ): EditProfileRepository = EditProfileRepository(auth, firestore, storage)
 }

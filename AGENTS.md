@@ -2,6 +2,8 @@
 
 > **A messaging app where every message is a hand-drawn note/doodle, delivered instantly and surfaced on the Home Screen via widgets.**
 
+> **Last Updated:** Three missing Cloud Functions added to `functions/index.js`: `onFollowRequestCreate` (FCM notification to target user on new follow request), `onFollowRequestAccept` (bidirectional `connections` doc creation + FCM to requester when status → "accepted"), and `purgeInactiveData` (scheduled monthly cleanup — runs 1st of month 03:00 UTC — purges expired `emailOtps`, stale `rateLimits` windows >30 days, and declined/cancelled `followRequests` >90 days). `onSchedule` import added from `firebase-functions/v2/scheduler`. `Timestamp` added to `firebase-admin/firestore` imports. Earlier: Contact sync fully implemented and wired. `ContactPermissionScreen` + `ContactSyncViewModel` + `ContactSyncUiState` complete. `ContactRepository.syncContacts()` reads device contacts via `ContactHashUtil`, hashes on-device, calls `matchContactsByHash` Cloud Function, and persists results to Firestore `suggestedContacts`. `matchContactsByHash` Cloud Function added to `functions/index.js` (Firebase Functions v2 `onCall`) — auth-gated, rate-limited (5/day), batch-capped (500 hashes), caller-excluded, `isSearchable`-filtered; phone hashes never returned to client. `ContactRepository` constructor fixed to accept `Context` (needed by `ContactHashUtil`) + `FirebaseAuth` + `FirebaseFunctions`. Hilt `AppModule.provideContactRepository` updated to inject all 5 deps (`@ApplicationContext context`, `contactDao`, `firestore`, `auth`, `functions`). Earlier: `HistoryScreen` (dedicated full-screen History route) created and wired to the bottom-nav **History** tab. `DashTab` enum and `activeTab` state removed — bottom-bar tab selection is now inferred from the current route. `DashboardScreen` simplified to always show the Inbox (RECENT ACTIVITY) feed with no tab-switching logic. `SketchlyBottomBar` API changed from `activeTab: DashTab` → `isHistorySelected: Boolean` + `onInboxTap`/`onHistoryTap` callbacks. Bottom bar now visible on both `dashboard` and `history` routes. `Screen.History` added to nav graph. Earlier: `SendToScreen` (full-screen recipient picker + `SentConfirmationDialog` overlay) and `AddWidgetScreen` (home screen widget promo) implemented and wired into the post-draw flow. `DrawViewModel` updated with `showSentDialog` state and recipient selection. `DashboardScreen` added as main home screen (greeting, recent-activity card, Draw FAB). ProfileScreen + SettingsScreen redesigned. Auth flow lands on `Dashboard` for all authenticated users.
+
 ---
 
 ## 🛠️ Tech Stack
@@ -55,51 +57,62 @@ Sketchly/
 │   │       ├── SendSketchlyWorker.kt
 │   │       └── WidgetUpdateWorker.kt
 │   │
+│   │   ├── ui/
+│   │   │   ├── components/     # Reusable Compose components
+│   │   │   │   ├── PenToolbar.kt
+│   │   │   │   ├── RecipientPickerSheet.kt
+│   │   │   │   ├── SkeletonLoader.kt
+│   │   │   │   └── SketchlyThumbnail.kt
+│   │   │   ├── navigation/
+│   │   │   │   ├── Screen.kt              # Route definitions
+│   │   │   │   ├── SketchlyBottomBar.kt
+│   │   │   │   └── SketchlyNavGraph.kt    # Nav graph setup
+│   │   │   ├── screens/
+│   │   │   │   ├── auth/
+│   │   │   │   │   ├── AuthScreen.kt           # Phone number input + OTP
+│   │   │   │   │   ├── AuthViewModel.kt        # Shared ViewModel for all auth screens
+│   │   │   │   │   ├── OtpVerificationScreen.kt
+│   │   │   │   │   └── ProfileSetupScreen.kt   # Full Name + Username after OTP
+│   │   │   │   ├── contacts/
+│   │   │   │   │   └── ContactPermissionScreen.kt  # READ_CONTACTS gate + hash sync
+│   │   │   │   ├── dashboard/
+│   │   │   │   │   └── DashboardScreen.kt      # Main home — greeting, RECENT ACTIVITY inbox feed, Draw FAB (no history tab)
+│   │   │   │   ├── draw/
+│   │   │   │   │   ├── DrawScreen.kt           # Full-screen canvas (no bottom bar)
+│   │   │   │   │   └── DrawViewModel.kt
+│   │   │   │   ├── inbox/
+│   │   │   │   │   ├── InboxScreen.kt          # Standalone inbox (accessible via Circle/Settings)
+│   │   │   │   │   └── InboxViewModel.kt
+│   │   │   │   ├── circle/
+│   │   │   │   │   ├── CircleScreen.kt         # Redesigned — search + colorful avatars + Add Friend sheet
+│   │   │   │   │   └── CircleViewModel.kt
+│   │   │   │   ├── send/
+│   │   │   │   │   └── SendToScreen.kt         # Full-screen recipient picker + SentConfirmationDialog
+│   │   │   │   ├── widget/
+│   │   │   │   │   └── AddWidgetScreen.kt      # Home screen widget promo
+│   │   │   │   ├── profile/
+│   │   │   │   │   └── ProfileScreen.kt        # Initials avatar, stats, Open Settings button
+│   │   │   │   ├── viewer/
+│   │   │   │   │   └── SketchlyViewerScreen.kt
+│   │   │   │   ├── history/
+│   │   │   │   │   └── HistoryScreen.kt        # [NEW] Full-screen History — date-grouped 2-col grid, filter chips, reuses ArchiveViewModel
+│   │   │   │   ├── archive/
+│   │   │   │   │   └── ArchiveScreen.kt        # Legacy archive (kept for deep-link compat; ArchiveViewModel shared with HistoryScreen)
+│   │   │   │   ├── settings/
+│   │   │   │   │   └── SettingsScreen.kt       # Redesigned — WIDGET / NOTIFICATIONS / ACCOUNT sections
+│   │   │   │   ├── preview/
+│   │   │   │   │   └── ScreenPreviewScreen.kt
+│   │   │   │   └── started/
+│   │   │   │       └── StartedScreen.kt        # Onboarding / splash
+│   │   │   └── theme/
+│   │   │       ├── Color.kt
+│   │   │       ├── Shape.kt
+│   │   │       ├── Spacing.kt
+│   │   │       ├── Theme.kt
+│   │   │       └── Type.kt
+│   │
 │   ├── di/
 │   │   └── AppModule.kt    # Hilt DI bindings
-│   │
-│   ├── ui/
-│   │   ├── components/     # Reusable Compose components
-│   │   │   ├── PenToolbar.kt
-│   │   │   ├── RecipientPickerSheet.kt
-│   │   │   ├── SkeletonLoader.kt
-│   │   │   └── SketchlyThumbnail.kt
-│   │   ├── navigation/
-│   │   │   ├── Screen.kt              # Route definitions
-│   │   │   ├── SketchlyBottomBar.kt
-│   │   │   └── SketchlyNavGraph.kt    # Nav graph setup
-│   │   ├── screens/
-│   │   │   ├── contacts/                   # Contact permission gate
-│   │   │   └── ContactPermissionScreen.kt  # Shown once after signup
-│   │   ├── auth/
-│   │   │   │   ├── AuthScreen.kt           # Phone number input
-│   │   │   │   ├── AuthViewModel.kt
-│   │   │   │   └── OtpVerificationScreen.kt
-│   │   │   ├── draw/
-│   │   │   │   ├── DrawScreen.kt           # Canvas drawing
-│   │   │   │   └── DrawViewModel.kt
-│   │   │   ├── inbox/
-│   │   │   │   ├── InboxScreen.kt
-│   │   │   │   └── InboxViewModel.kt
-│   │   │   ├── circle/                     # Contacts/friends
-│   │   │   │   ├── CircleScreen.kt
-│   │   │   │   └── CircleViewModel.kt
-│   │   │   ├── viewer/
-│   │   │   │   └── SketchlyViewerScreen.kt # View received scribble
-│   │   │   ├── archive/
-│   │   │   │   └── ArchiveScreen.kt
-│   │   │   ├── settings/
-│   │   │   │   └── SettingsScreen.kt
-│   │   │   ├── preview/
-│   │   │   │   └── ScreenPreviewScreen.kt
-│   │   │   └── started/
-│   │   │       └── StartedScreen.kt        # Onboarding/splash
-│   │   └── theme/
-│   │       ├── Color.kt
-│   │       ├── Shape.kt
-│   │       ├── Spacing.kt
-│   │       ├── Theme.kt
-│   │       └── Type.kt
 │   │
 │   ├── utils/
 │   │   └── Utils.kt
@@ -121,14 +134,58 @@ Sketchly/
 
 ---
 
-## 🔐 Authentication Flow
+## 🔐 Authentication Flow (V1)
 
-- **Primary**: Firebase Phone Auth (OTP via SMS)
-- **Flow**: `StartedScreen` → `AuthScreen` (phone/email input) → `OtpVerificationScreen` → **`ContactPermissionScreen`** → `DrawScreen`
-- **ViewModel**: `AuthViewModel` in `ui/screens/auth/`
+- **Primary**: Firebase Phone Auth (OTP via SMS). Email/password is V2.
+- **V1 Flow (new user)**:
+  `StartedScreen` → `AuthScreen` (phone entry) → `OtpVerificationScreen` → **`ProfileSetupScreen`** (Full Name + Username) → **`ContactPermissionScreen`** (hash sync) → **`DashboardScreen`**
+- **V1 Flow (returning user)**:
+  `StartedScreen` → `AuthScreen` → `OtpVerificationScreen` → **`DashboardScreen`** (skips Profile + Contact screens)
+- **Post-Draw Send Flow**:
+  `DrawScreen` →(Next)→ `SendToScreen` →(send)→ `[SentConfirmationDialog]` →(Continue)→ `AddWidgetScreen` →(Add/Skip)→ **`DashboardScreen`**
+- **New vs returning detection**: `AuthRepository.syncUserProfile()` checks if Firestore doc has non-blank `username`. Returns `isNewUser: Boolean`.
+- **ViewModel**: `AuthViewModel` in `ui/screens/auth/` — shared by `AuthScreen`, `OtpVerificationScreen`, and `ProfileSetupScreen` via `hiltViewModel()`
 - **Repository**: `AuthRepository` in `data/repository/`
 - **Debug OTP**: `BuildConfig.DEBUG_OTP = "123456"` (only in debug builds)
 - All Firestore access gated by Firebase Security Rules on `request.auth.uid`
+
+### Bottom Bar Visibility
+The system bottom nav bar is **allowlist-based** in `MainActivity`. The `DashboardScreen` has its **own internal bottom bar** (Inbox | Draw FAB | History) so it is included in the allowlist but renders no system bar items on top of it.
+
+| Route | Screen | System Bottom Bar |
+|---|---|---|
+| `dashboard` | DashboardScreen | In allowlist (has own bar) |
+| `draw` | DrawScreen | Hidden |
+| `send_to` | SendToScreen | Hidden |
+| `add_widget` | AddWidgetScreen | Hidden |
+| `profile` | ProfileScreen | Hidden |
+| `viewer` | SketchlyViewerScreen | Hidden |
+| `history` | HistoryScreen | Visible (History tab selected) |
+| `inbox` | InboxScreen | Visible |
+| `circle` | CircleScreen | Visible |
+| `settings` | SettingsScreen | Visible |
+| `archive` | ArchiveScreen | Visible |
+| `screen_preview` | ScreenPreviewScreen | Visible |
+
+### DashboardScreen internals
+- **No tabs** — Dashboard always shows the Inbox (RECENT ACTIVITY) feed. The `DashTab` enum and `activeTab` state have been removed.
+- **Top bar icons**: Circle icon (→ `CircleScreen`) + initials avatar (→ `ProfileScreen`)
+- **Draw FAB**: gold pencil button floating above centre of bar → `DrawScreen`
+- **Data**: driven by `InboxViewModel` (sketches, unread count, online status) + `SettingsViewModel` (user display name / initials)
+- **Greeting**: time-based — Good morning / afternoon / evening / night + first name
+
+### HistoryScreen internals
+- **Route**: `Screen.History` (`"history"`) — navigated to by tapping the History tab in `SketchlyBottomBar`
+- **Top bar**: profile avatar ✦ (left) → `ProfileScreen` · *"History"* italic title (center) · settings gear (right) → `SettingsScreen`
+- **Filter chips**: All / Sent / Received + one chip per unique sender (from Room cache)
+- **Body**: date-grouped 2-column grid with sticky section headers (Today / Yesterday / This Week / Earlier)
+- **Empty state**: mirrors DashboardScreen empty state — clock emoji, "No history yet", Draw a Scribble button
+- **ViewModel**: reuses `ArchiveViewModel` (pagination, `HistoryFilter`, sender list)
+- **Bottom bar**: shown with **History tab selected** (`isHistorySelected = true`)
+
+### SketchlyBottomBar API (updated)
+- Signature: `isHistorySelected: Boolean`, `onInboxTap: () -> Unit`, `onHistoryTap: () -> Unit`, `onDrawTap: () -> Unit`
+- `isHistorySelected` is derived in `MainActivity` from `currentRoute == Screen.History.route` — no separate state variable needed.
 
 ---
 
@@ -138,7 +195,7 @@ Sketchly/
 |---|---|
 | **Firebase Auth** | Phone OTP authentication |
 | **Firestore** | User docs, Scribble metadata + stroke JSON, reactions, contacts |
-| **Cloud Functions** | `onScribbleCreate` (fan-out FCM), `onReactionCreate`, `purgeInactiveData`, `validateScribblePayload` |
+| **Cloud Functions** | `onScribbleCreate` (fan-out FCM), `onReactionCreate`, `onFollowRequestCreate`, `onFollowRequestAccept`, `purgeInactiveData`, `sendEmailOtp`, `verifyEmailOtp`, `matchContactsByHash` |
 | **Cloud Messaging (FCM)** | Push to trigger widget refresh + notifications |
 | **Cloud Storage** | Optional pre-rendered PNG thumbnails |
 | **Crashlytics** | Crash/ANR tracking |
@@ -174,6 +231,25 @@ Sketchly/
 
 ---
 
+## 🧑‍💼 User Model (`data/model/User.kt`)
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | String | Firebase UID |
+| `displayName` | String | Full name — set in ProfileSetupScreen |
+| `username` | String | Unique, lowercase, 3–20 chars, alphanumeric + _ |
+| `phoneNumberHash` | String | SHA-256 of E.164 phone number — used for contact sync |
+| `avatarUrl` | String | Optional profile picture |
+| `isSearchable` | Boolean | If false, hidden from username search |
+| `authProvider` | String | "phone" (V1) \| "email" (V2) |
+| `fcmToken` | String | FCM registration token for push delivery |
+| `widgetPreviewEnabled` | Boolean | Widget doodle preview toggle |
+| `notificationsEnabled` | Boolean | Push notification toggle |
+| `email` | String | **V2 — hidden in V1 UI, kept in model** |
+| `isEmailVerified` | Boolean | **V2 — hidden in V1 UI, kept in model** |
+
+---
+
 ## 🚫 Common Gotchas / Conventions
 
 - Stroke data is stored as **JSON inline** in Firestore doc (not Cloud Storage) — keep under Firestore's 1MB limit
@@ -181,6 +257,32 @@ Sketchly/
 - No custom WebSocket server — Firestore listeners handle real-time needs
 - `DEBUG_OTP` field exists in `BuildConfig` — do NOT use in release builds
 - All Firestore Security Rules are version-controlled in `firestore.rules`, never edited manually in console
+- **Email auth UI is HIDDEN in V1** — `EmailView`, `toggleAuthMode`, `submitEmailAuth`, `sendEmailOtp`, `verifyEmailOtp` are all preserved in code for V2. Do NOT delete them.
+- **Raw phone numbers never leave the device** — `AuthRepository.sha256()` hashes before any network call. `User.phoneNumberHash` stores the hash, not the raw number.
+- **ProfileSetupScreen shares AuthViewModel** — it reads `phoneNumber`/`countryCode` from state to compute the phone hash on save.
+- **Username is immutable in V1** — once saved to Firestore, it cannot be changed (V2 feature).
+- **`verifyPhoneOtp()` in AuthViewModel has two callbacks** — `onNewUser` and `onReturningUser`. NavGraph uses these for smart routing. Do not collapse them into a single callback.
+- **`syncUserProfile()` returns `Boolean`** — `true` = new user needs ProfileSetup, `false` = returning user.
+- **`DashboardScreen` is the home screen** — `MainActivity.startDestination` is `Screen.Dashboard.route` for authenticated users. Do NOT navigate to `Screen.Draw` or `Screen.Inbox` as the root after auth.
+- **`DashboardScreen` has NO internal tabs** — `DashTab` enum is gone. The Dashboard only shows the Inbox feed. History lives on `Screen.History` / `HistoryScreen`.
+- **`SketchlyBottomBar` is shown on both `dashboard` and `history` routes** — do NOT add it to Draw, SendTo, Profile, Viewer, or any other route.
+- **`SketchlyBottomBar` tab selection is route-based** — `isHistorySelected = currentRoute == Screen.History.route`. There is no `activeTab` state variable in `MainActivity`.
+- **`SettingsViewModel` is shared** — both `SettingsScreen` and `ProfileScreen` inject it via `hiltViewModel()`. It exposes `currentUser: StateFlow<FirebaseUser?>` and `signOut()`.
+- **`DrawViewModel` is scoped to the Draw back-stack entry** — `SendToScreen` retrieves it via `hiltViewModel(navController.getBackStackEntry(Screen.Draw.route))` so contacts and send state are unified across both screens.
+- **`SentConfirmationDialog` is an overlay, not a nav destination** — it is rendered inside `SendToScreen` as a `Box` overlay (dimmed scrim + card) controlled by `DrawViewModel.showSentDialog`. Do NOT convert it into a separate route.
+- **`AddWidgetScreen` uses Android pin API** — calls `AppWidgetManager.requestPinAppWidget()` on Android 8.0+ (API 26+). On older devices or if pinning is not supported, the "Add Widget" button falls back to navigating to `DashboardScreen`.
+- **`ContactRepository` requires 5 constructor args** — `contactDao`, `firestore`, `fireAuth`, `functions`, `context` (in that order). `AppModule.provideContactRepository` must inject all five including `@ApplicationContext context`. Missing any arg is a Hilt compile error.
+- **`ContactHashUtil` is the ONLY place raw phone numbers are touched** — `ContactHashUtil.getHashedPhoneNumbers(context)` reads device contacts, normalizes to E.164, SHA-256 hashes, and returns hashes only. Raw numbers never leave this utility. Do NOT read `ContactsContract` anywhere else in the codebase.
+- **Contact sync results are stored in Firestore, NOT Room** — `syncContacts()` writes to `users/{uid}/suggestedContacts` via `saveToFirestore()`. `ContactDao` / `ContactEntity` (Room `contacts` table) is used only for manually-added contacts. Do NOT try to store sync matches in Room.
+- **`SketchlyContactEntity` in `ContactModels.kt` is dead code** — it defines a `sketchly_contacts` table that is not registered in `@Database`. It is not used by any code path. Do NOT register it in `SketchlyDatabase` unless a future feature explicitly requires local caching of sync results.
+- **`matchContactsByHash` is a Firebase Functions v2 `onCall`** — defined in `functions/index.js` using `onCall({ region: "us-central1" }, ...)` (NOT the v1 `functions.https.onCall`). The Android client calls it via `FirebaseFunctions.getInstance("us-central1").getHttpsCallable("matchContactsByHash")`. Auth context is in `request.auth` (v2), not `context.auth` (v1).
+- **Contact sync is rate-limited to 5 per user per 24 h** — enforced server-side in `matchContactsByHash` via `rateLimits/contactSync_{uid}` Firestore doc. Client receives `functions/resource-exhausted` error if limit is exceeded — surface this to the user in `ErrorState`.
+- **`ContactSyncViewModel.onPermissionGranted()` uses `getSuggestedContacts().first()`** — this collects the first emission of the Firestore snapshot listener. It is correct only because `saveToFirestore()` has already committed before this call. Do not reorder these operations.
+- **`onFollowRequestCreate` fires on `followRequests/{requestId}` onCreate** — sends an FCM notification (channelId: `"social"`) to `toUserId`. Expected doc fields: `fromUserId`, `toUserId`, `fromUserName`, `status: "pending"`, `createdAt`.
+- **`onFollowRequestAccept` fires on `followRequests/{requestId}` onWrite** — only acts when `status` flips to `"accepted"`. Creates two symmetric docs in `connections/`: `{fromUserId}_{toUserId}` and `{toUserId}_{fromUserId}`, each with `userAId`, `userBId`, `createdAt`. Then sends FCM (channelId: `"social"`) to `fromUserId`. The `toUserName` field must be present in the follow-request doc for the notification body.
+- **`purgeInactiveData` is a scheduled function** — uses `onSchedule` from `firebase-functions/v2/scheduler`. Cron: `"0 3 1 * *"` (1st of month, 03:00 UTC). Deletes: expired `emailOtps` (where `expiresAtMs < now`), stale `rateLimits` windows (where `windowStart < 30 days ago`), and old declined/cancelled `followRequests` (where `createdAt < 90 days ago`). Uses batch deletes of 500 docs to avoid Firestore limits.
+- **`sendEmailOtp` and `verifyEmailOtp` are V2 callables** — preserved in `functions/index.js` for the V2 email auth flow. Do NOT delete them. They are NOT called by any V1 Android code path.
+- **`social` FCM notification channel** — client-side Android code must create a `NotificationChannel` with id `"social"` at app startup (alongside `"reactions"`) to receive follow-request notifications.
 
 ---
 

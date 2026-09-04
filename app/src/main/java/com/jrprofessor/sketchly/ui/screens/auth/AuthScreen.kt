@@ -1,10 +1,11 @@
 package com.jrprofessor.sketchly.ui.screens.auth
 
+import android.util.Log
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -44,6 +45,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -103,46 +105,6 @@ fun AuthScreenSignInPhonePreview() {
 
 @Preview(showBackground = true)
 @Composable
-fun AuthScreenSignInEmailPreview() {
-    SketchlyTheme {
-        AuthContent(
-            uiState = AuthUiState(isSignUp = false, isPhoneMode = false),
-            onDisplayNameChanged = {},
-            onEmailChanged = {},
-            onPasswordChanged = {},
-            onPhoneNumberChanged = {},
-            toggleAuthMode = {},
-            onSignUpChanged = {},
-            onSubmit = {},
-            onVerifyOtp = {},
-            onOtpDigitChanged = { _, _ -> },
-            onResendOtp = {},
-        )
-    }
-}
-
-@Preview(showBackground = true)
-@Composable
-fun AuthScreenSignUpEmailPreview() {
-    SketchlyTheme {
-        AuthContent(
-            uiState = AuthUiState(isSignUp = true, isPhoneMode = false),
-            onDisplayNameChanged = {},
-            onEmailChanged = {},
-            onPasswordChanged = {},
-            onPhoneNumberChanged = {},
-            toggleAuthMode = {},
-            onSignUpChanged = {},
-            onSubmit = {},
-            onVerifyOtp = {},
-            onOtpDigitChanged = { _, _ -> },
-            onResendOtp = {},
-        )
-    }
-}
-
-@Preview(showBackground = true)
-@Composable
 fun AuthScreenOtpPreview() {
     SketchlyTheme {
         AuthContent(
@@ -170,9 +132,23 @@ fun AuthScreenOtpPreview() {
 // Screen (hooked to ViewModel)
 // ─────────────────────────────────────────────
 
+/**
+ * Auth entry point: Phone number entry → OTP verification.
+ *
+ * V1 flow: Phone → OTP → [NavGraph routes to ProfileSetupScreen or Draw]
+ *
+ * [onNewUser]       — called after OTP success for brand-new accounts; NavGraph
+ *                     navigates to ProfileSetupScreen.
+ * [onReturningUser] — called after OTP success for returning users; NavGraph
+ *                     navigates directly to Draw/Inbox.
+ *
+ * Email auth UI is HIDDEN in V1 but all email logic (EmailView, toggleAuthMode,
+ * submitEmailAuth, etc.) is preserved in the codebase for V2 re-enablement.
+ */
 @Composable
 fun AuthScreen(
-    onAuthSuccess: () -> Unit,
+    onNewUser: () -> Unit,
+    onReturningUser: () -> Unit,
     viewModel: AuthViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -189,22 +165,28 @@ fun AuthScreen(
         onSignUpChanged = viewModel::onSignUpChanged,
         onSubmit = {
             if (uiState.isPhoneMode) {
-                // Phone mode → send SMS OTP first
-                viewModel.sendPhoneOtp(activity!!) { /* OTP sent, state update shows OTP screen */ }
+                // Phone mode → send SMS OTP. State update (isOtpSent=true) drives
+                // the transition to OtpVerificationScreen automatically.
+                viewModel.sendPhoneOtp(activity!!)
             } else {
-                // Email mode → sign up creates account + sends email OTP; sign in goes direct
+                // Email mode (V2 — not reachable from V1 UI but logic kept)
                 viewModel.submitEmailAuth(
-                    onSuccess = onAuthSuccess,
+                    onSuccess = onReturningUser,
                     onNeedsOtp = { /* state update shows OTP screen */ },
                 )
             }
         },
-        onVerifyOtp = { viewModel.verifyOtp(onAuthSuccess) },
+        onVerifyOtp = {
+            viewModel.verifyPhoneOtp(
+                onNewUser = onNewUser,
+                onReturningUser = onReturningUser,
+            )
+        },
         onOtpDigitChanged = viewModel::onOtpDigitChanged,
         onResendOtp = {
-            viewModel.resendOtp(activity = if (uiState.isPhoneMode) activity else null) {}
+            // State update inside ViewModel drives OTP screen refresh
+            viewModel.resendOtp(activity = if (uiState.isPhoneMode) activity else null)
         },
-        onSaveDisplayName = { viewModel.saveDisplayName(onAuthSuccess) },
     )
 }
 
@@ -225,13 +207,13 @@ fun AuthContent(
     onVerifyOtp: () -> Unit,
     onOtpDigitChanged: (Int, String) -> Unit,
     onResendOtp: () -> Unit,
+    // Kept for API compat with previews; not used in V1 direct flow
     onSaveDisplayName: () -> Unit = {},
 ) {
-    // Derive a single integer key so AnimatedContent knows which step we're on
+    // Two steps: 0 = phone entry, 1 = OTP
     val step = when {
-        uiState.isNameEntry -> 2
-        uiState.isOtpSent   -> 1
-        else                -> 0
+        uiState.isOtpSent -> 1
+        else              -> 0
     }
 
     AnimatedContent(
@@ -243,14 +225,6 @@ fun AuthContent(
         label = "authStepTransition",
     ) { currentStep ->
         when (currentStep) {
-            2 -> {
-                // ── Name-entry screen (after phone OTP) ──
-                NameEntryScreen(
-                    uiState = uiState,
-                    onDisplayNameChanged = onDisplayNameChanged,
-                    onContinue = onSaveDisplayName,
-                )
-            }
             1 -> {
                 // ── OTP verification screen ──
                 OtpVerificationScreen(
@@ -261,7 +235,7 @@ fun AuthContent(
                 )
             }
             else -> {
-                // ── Auth form (phone / email) ──
+                // ── Auth form (phone only in V1) ──
                 AuthFormContent(
                     uiState = uiState,
                     onDisplayNameChanged = onDisplayNameChanged,
@@ -278,7 +252,8 @@ fun AuthContent(
 }
 
 // ─────────────────────────────────────────────
-// Auth form (phone entry / email+password)
+// Auth form (phone entry — V1 default)
+// Email section kept but not rendered in V1 UI.
 // ─────────────────────────────────────────────
 
 @Composable
@@ -321,11 +296,14 @@ private fun AuthFormContent(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
+                    // V1: Phone only.
+                    // V2: uncomment `else` branch below and restore the toggle button.
                     if (uiState.isPhoneMode) {
                         PhoneNumberView(
                             uiState.phoneNumber, uiState.countryCode, onPhoneNumberChanged
                         )
                     } else {
+                        // V2: Email flow (not reachable in V1 — toggle button is hidden)
                         EmailView(
                             isSignUp = uiState.isSignUp,
                             email = uiState.email,
@@ -389,17 +367,20 @@ private fun AuthFormContent(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Mode Toggle
-                    TextButton(onClick = toggleAuthMode) {
-                        Text(
-                            text = if (uiState.isPhoneMode) "Use email instead"
-                            else "Use phone number instead",
-                            style = MaterialTheme.typography.bodyMedium,
-                            textDecoration = TextDecoration.Underline,
-                            color = TextMuted,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
+                    // ── V1: Email toggle button is HIDDEN.
+                    // The toggle logic (toggleAuthMode) and EmailView composable are
+                    // preserved below for V2 re-enablement. Simply un-comment this block:
+                    //
+                    // TextButton(onClick = toggleAuthMode) {
+                    //     Text(
+                    //         text = if (uiState.isPhoneMode) "Use email instead"
+                    //         else "Use phone number instead",
+                    //         style = MaterialTheme.typography.bodyMedium,
+                    //         textDecoration = TextDecoration.Underline,
+                    //         color = TextMuted,
+                    //         fontWeight = FontWeight.Bold,
+                    //     )
+                    // }
                 }
             }
         }
@@ -408,6 +389,7 @@ private fun AuthFormContent(
 
 // ─────────────────────────────────────────────
 // Email form (Sign Up / Sign In tabs)
+// V2 — not shown in V1 UI. Preserved for re-enablement.
 // ─────────────────────────────────────────────
 
 @Composable
@@ -699,157 +681,5 @@ fun PhoneNumberView(
             ),
             singleLine = true,
         )
-    }
-}
-
-// ─────────────────────────────────────────────
-// Name Entry Screen (shown after phone OTP)
-// ─────────────────────────────────────────────
-
-@Preview(showBackground = true)
-@Composable
-fun NameEntryScreenPreview() {
-    SketchlyTheme {
-        NameEntryScreen(
-            uiState = AuthUiState(displayName = "Alex Rivera", isNameEntry = true),
-            onDisplayNameChanged = {},
-            onContinue = {},
-        )
-    }
-}
-
-/**
- * Shown to phone-auth users immediately after OTP verification.
- * Asks for their display name before navigating to the Draw screen.
- */
-@Composable
-fun NameEntryScreen(
-    uiState: AuthUiState,
-    onDisplayNameChanged: (String) -> Unit,
-    onContinue: () -> Unit,
-) {
-    val focusManager = LocalFocusManager.current
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(BgColor),
-    ) {
-        Column(
-            modifier = Modifier
-                .safeDrawingPadding()
-                .padding(horizontal = 24.dp, vertical = 32.dp)
-                .fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Spacer(modifier = Modifier.height(40.dp))
-
-            // Title
-            Text(
-                text = "What's your name?",
-                style = MaterialTheme.typography.headlineMedium,
-                color = AppNameColor,
-                textAlign = TextAlign.Center,
-                fontWeight = FontWeight.Bold,
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Subtitle
-            Text(
-                text = "This is how you'll appear to friends on Sketchly.",
-                style = MaterialTheme.typography.bodyLarge,
-                color = TextMuted,
-                textAlign = TextAlign.Center,
-                fontWeight = FontWeight.Medium,
-            )
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            // Name field — uses same style as the rest of the auth form
-            OutlinedTextField(
-                value = uiState.displayName,
-                onValueChange = onDisplayNameChanged,
-                placeholder = {
-                    Text(
-                        "Name",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = TextMuted,
-                        fontWeight = FontWeight.Medium,
-                    )
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(64.dp),
-                shape = RoundedCornerShape(18.dp),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Text,
-                    imeAction = ImeAction.Done,
-                ),
-                keyboardActions = KeyboardActions(
-                    onDone = {
-                        focusManager.clearFocus()
-                        onContinue()
-                    },
-                ),
-                textStyle = MaterialTheme.typography.bodyLarge.copy(
-                    letterSpacing = 2.sp,
-                    color = TextColor,
-                ),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = ButtonGold,
-                    unfocusedBorderColor = TextEditorBorderColor,
-                    focusedContainerColor = TextEditorBgColor,
-                    unfocusedContainerColor = TextEditorBgColor,
-                    cursorColor = MaterialTheme.colorScheme.primary,
-                ),
-                singleLine = true,
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Error
-            if (uiState.errorMessage != null) {
-                Text(
-                    text = uiState.errorMessage,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(bottom = 8.dp),
-                )
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Continue button
-            Button(
-                onClick = {
-                    focusManager.clearFocus()
-                    onContinue()
-                },
-                enabled = !uiState.isLoading && uiState.displayName.isNotBlank(),
-                shape = PillShape,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = ButtonGold,
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp),
-            ) {
-                if (uiState.isLoading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        strokeWidth = 2.5.dp,
-                    )
-                } else {
-                    Text(
-                        text = "Continue",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                    )
-                }
-            }
-        }
     }
 }
