@@ -1,14 +1,18 @@
 package com.jrprofessor.sketchly.data.repository
 
 import android.net.Uri
+import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.storage.FirebaseStorage
-import com.jrprofessor.sketchly.data.model.UserProfile
+import com.google.firebase.storage.StorageMetadata
+// UserProfile is defined at the bottom of this file (same package — no import needed)
 import kotlinx.coroutines.tasks.await
 import javax.inject.Inject
 import javax.inject.Singleton
+
+private const val TAG = "EditProfileRepository"
 
 /**
  * EditProfileRepository
@@ -52,6 +56,7 @@ class EditProfileRepository @Inject constructor(
             )
         )
     } catch (e: Exception) {
+        Log.e(TAG, "Error loading profile", e)
         Result.failure(e)
     }
 
@@ -67,10 +72,16 @@ class EditProfileRepository @Inject constructor(
         val uid = currentUid
         val ref = storage.reference.child("avatars/$uid/avatar.jpg")
 
-        ref.putFile(imageUri).await()
+        val metadata = StorageMetadata.Builder()
+            .setContentType("image/jpeg")
+            .build()
+
+        ref.putFile(imageUri, metadata).await()
         val downloadUrl = ref.downloadUrl.await().toString()
+        Log.d(TAG, "Uploaded avatar successfully: $downloadUrl")
         Result.success(downloadUrl)
     } catch (e: Exception) {
+        Log.e(TAG, "Failed to upload avatar", e)
         Result.failure(e)
     }
 
@@ -111,6 +122,7 @@ class EditProfileRepository @Inject constructor(
 
         Result.success(Unit)
     } catch (e: Exception) {
+        Log.e(TAG, "Error saving profile", e)
         Result.failure(e)
     }
 }

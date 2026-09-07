@@ -2,7 +2,10 @@ package com.jrprofessor.sketchly.utils
 
 import android.content.Context
 import android.provider.ContactsContract
+import android.util.Log
 import java.security.MessageDigest
+
+private const val TAG = "ContactHashUtil"
 
 /**
  * ContactHashUtil.kt
@@ -28,6 +31,7 @@ object ContactHashUtil {
      * Raw numbers are never returned, never stored, never logged.
      */
     fun getHashedPhoneNumbers(context: Context): List<String> {
+        Log.d(TAG, "getHashedPhoneNumbers: starting contact read")
         val hashes = mutableListOf<String>()
         val rawNumbers = mutableListOf<String>() // held briefly, then cleared
 
@@ -40,32 +44,55 @@ object ContactHashUtil {
                 null
             )
 
-            cursor?.use {
+            if (cursor == null) {
+                Log.w(TAG, "getHashedPhoneNumbers: ContentResolver returned null cursor — no contacts or permission denied")
+                return emptyList()
+            }
+
+            cursor.use {
                 val columnIndex = it.getColumnIndex(
                     ContactsContract.CommonDataKinds.Phone.NORMALIZED_NUMBER
                 )
+                if (columnIndex == -1) {
+                    Log.e(TAG, "getHashedPhoneNumbers: NORMALIZED_NUMBER column not found in cursor")
+                    return@use
+                }
+                var totalRows = 0
+                var blankRows = 0
                 while (it.moveToNext()) {
+                    totalRows++
                     val number = it.getString(columnIndex)
                     if (!number.isNullOrBlank()) {
                         rawNumbers.add(number)
+                    } else {
+                        blankRows++
                     }
                 }
+                Log.d(TAG, "getHashedPhoneNumbers: cursor rows=$totalRows, blank/null=$blankRows, valid=${rawNumbers.size}")
             }
 
-            // Deduplicate before hashing to avoid redundant Cloud Function work
+            // Deduplicate before hashing
             val uniqueNumbers = rawNumbers.distinct()
+            Log.d(TAG, "getHashedPhoneNumbers: unique numbers after dedup=${uniqueNumbers.size}")
 
-            // Hash each number — this is the only transformation that matters
+            var skipped = 0
+            // Hash each number
             uniqueNumbers.forEach { number ->
                 val normalized = normalizeToE164(number)
                 if (normalized != null) {
                     hashes.add(sha256(normalized))
+                } else {
+                    skipped++
                 }
             }
+            Log.d(TAG, "getHashedPhoneNumbers: hashed=${hashes.size}, skipped (not E.164)=$skipped")
 
+        } catch (e: Exception) {
+            Log.e(TAG, "getHashedPhoneNumbers: exception reading contacts — ${e.javaClass.simpleName}: ${e.message}", e)
         } finally {
             // Explicitly clear raw numbers from memory as soon as hashing is done
             rawNumbers.clear()
+            Log.d(TAG, "getHashedPhoneNumbers: raw numbers cleared from memory, returning ${hashes.size} hashes")
         }
 
         return hashes

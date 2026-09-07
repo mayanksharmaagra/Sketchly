@@ -109,11 +109,9 @@ service cloud.firestore {
     }
 
     // ── Suggested Contacts (contact sync results) ──
-    // Users can only read their own suggestedContacts sub-collection.
-    // Writes are performed exclusively by the matchContactsByHash Cloud Function.
+    // Users can read and write their own suggestedContacts sub-collection.
     match /users/{userId}/suggestedContacts/{contactId} {
-      allow read: if isSignedIn() && isOwner(userId);
-      allow write: if false; // Admin SDK only
+      allow read, write: if isSignedIn() && isOwner(userId);
     }
 
     // Deny everything else by default.

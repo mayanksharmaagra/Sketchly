@@ -1,6 +1,7 @@
 package com.jrprofessor.sketchly.ui.screens.contacts
 
 import android.Manifest
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
@@ -60,6 +61,7 @@ fun ContactPermissionScreen(
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
+        Log.d("ContactPermissionScreen", "permissionLauncher result: isGranted=$isGranted")
         if (isGranted) {
             viewModel.onPermissionGranted()
         } else {
@@ -69,12 +71,16 @@ fun ContactPermissionScreen(
 
     // React to state changes
     LaunchedEffect(uiState) {
+        Log.d("ContactPermissionScreen", "LaunchedEffect: uiState changed to $uiState")
         when (uiState) {
             is ContactSyncUiState.RequestingPermission -> {
-                // Launch system permission dialog
+                Log.d("ContactPermissionScreen", "Launching system READ_CONTACTS permission request")
                 permissionLauncher.launch(Manifest.permission.READ_CONTACTS)
             }
-            is ContactSyncUiState.Skipped -> onSkip()
+            is ContactSyncUiState.Skipped -> {
+                Log.d("ContactPermissionScreen", "Navigating via onSkip()")
+                onSkip()
+            }
             else -> Unit
         }
     }
@@ -96,34 +102,56 @@ fun ContactPermissionScreen(
                 is ContactSyncUiState.Idle,
                 is ContactSyncUiState.RequestingPermission -> {
                     IdleState(
-                        onSyncTapped = { viewModel.onSyncButtonTapped() },
-                        onSkipTapped = { viewModel.onSkipTapped() }
+                        onSyncTapped = {
+                            Log.d("ContactPermissionScreen", "Sync Contacts button tapped")
+                            viewModel.onSyncButtonTapped()
+                        },
+                        onSkipTapped = {
+                            Log.d("ContactPermissionScreen", "Skip for now tapped from Idle")
+                            viewModel.onSkipTapped()
+                        }
                     )
                 }
 
                 is ContactSyncUiState.Syncing -> {
+                    Log.d("ContactPermissionScreen", "Rendering SyncingState")
                     SyncingState()
                 }
 
                 is ContactSyncUiState.Success -> {
+                    Log.d("ContactPermissionScreen", "Rendering SuccessState: matched=${state.matchedCount}, contacts=${state.contacts.size}")
                     SuccessState(
                         matchedCount = state.matchedCount,
                         contacts = state.contacts,
-                        onContinue = onSyncComplete
+                        onContinue = {
+                            Log.d("ContactPermissionScreen", "Continue button tapped from SuccessState")
+                            onSyncComplete()
+                        }
                     )
                 }
 
                 is ContactSyncUiState.PermissionDenied -> {
+                    Log.w("ContactPermissionScreen", "Rendering PermissionDeniedState")
                     PermissionDeniedState(
-                        onSkipTapped = { viewModel.onSkipTapped() }
+                        onSkipTapped = {
+                            Log.d("ContactPermissionScreen", "Skip tapped from PermissionDeniedState")
+                            viewModel.onSkipTapped()
+                        }
                     )
                 }
 
                 is ContactSyncUiState.Error -> {
+                    Log.e("ContactPermissionScreen", "Rendering ErrorState: ${state.message}")
                     ErrorState(
                         message = state.message,
-                        onRetry = { viewModel.onRetryTapped() },
-                        onSkip = { viewModel.onSkipTapped() }
+                        onRetry = {
+                            Log.d("ContactPermissionScreen", "Retry tapped from ErrorState")
+                            viewModel.onRetryTapped()
+                        },
+                        onSkip = {
+                            Log.d("ContactPermissionScreen", "Skip tapped from ErrorState")
+                            viewModel.onSkipTapped()
+                        }
                     )
                 }
 

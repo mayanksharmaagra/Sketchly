@@ -1,5 +1,9 @@
 package com.jrprofessor.sketchly.ui.screens.settings
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -35,41 +39,127 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.jrprofessor.sketchly.ui.theme.SketchlyTheme
+import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import androidx.work.Constraints
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 import com.google.firebase.auth.FirebaseUser
+import com.jrprofessor.sketchly.data.model.User
 import com.jrprofessor.sketchly.data.repository.AuthRepository
+import com.jrprofessor.sketchly.data.worker.ContactSyncWorker
 import com.jrprofessor.sketchly.ui.theme.AppNameColor
 import com.jrprofessor.sketchly.ui.theme.BgColor
 import com.jrprofessor.sketchly.ui.theme.ButtonGold
+import com.jrprofessor.sketchly.ui.theme.SketchlyTheme
 import com.jrprofessor.sketchly.ui.theme.TextEditorBorderColor
 import com.jrprofessor.sketchly.ui.theme.TextMuted
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ViewModel
 // ─────────────────────────────────────────────────────────────────────────────
 
+@OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val authRepository: AuthRepository,
+    private val workManager: WorkManager,
 ) : ViewModel() {
 
+    private val _isContactSyncEnabled = MutableStateFlow(false)
+    val isContactSyncEnabled: StateFlow<Boolean> = _isContactSyncEnabled.asStateFlow()
+
+    /** FirebaseUser — used for uid and auth state only. displayName is always blank for phone auth. */
     val currentUser: StateFlow<FirebaseUser?> = authRepository.authState
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), authRepository.currentUser)
+
+    /**
+     * Firestore User document — the REAL source of truth for displayName, username, avatarUrl.
+     * Reloaded automatically whenever auth state changes (login / logout).
+     */
+    val firestoreUser: StateFlow<User?> = authRepository.authState
+        .mapLatest { firebaseUser ->
+            firebaseUser?.uid?.let { uid -> authRepository.getUserProfile(uid) }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    /**
+     * Enables periodic contact sync every 24 hours using WorkManager
+     * and triggers an immediate one-time sync task.
+     */
+    fun enableContactSync() {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+
+        // 1. Schedule 24-hour periodic work
+        val periodicWorkRequest = PeriodicWorkRequestBuilder<ContactSyncWorker>(
+            24, TimeUnit.HOURS
+        )
+            .setConstraints(constraints)
+            .build()
+
+        workManager.enqueueUniquePeriodicWork(
+            ContactSyncWorker.WORK_NAME,
+            ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE,
+            periodicWorkRequest
+        )
+
+        // 2. Trigger immediate sync task
+        val immediateWorkRequest = OneTimeWorkRequestBuilder<ContactSyncWorker>()
+            .setConstraints(constraints)
+            .build()
+
+        workManager.enqueue(immediateWorkRequest)
+
+        _isContactSyncEnabled.value = true
+    }
+
+    /**
+     * Cancels the periodic WorkManager task for contact sync.
+     */
+    fun disableContactSync() {
+        workManager.cancelUniqueWork(ContactSyncWorker.WORK_NAME)
+        _isContactSyncEnabled.value = false
+    }
+
+    /**
+     * Triggers an immediate one-time contact sync task via WorkManager.
+     */
+    fun syncContactsNow() {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+
+        val immediateWorkRequest = OneTimeWorkRequestBuilder<ContactSyncWorker>()
+            .setConstraints(constraints)
+            .build()
+
+        workManager.enqueue(immediateWorkRequest)
+    }
 
     fun signOut(onSignedOut: () -> Unit) {
         viewModelScope.launch {
@@ -82,7 +172,6 @@ class SettingsViewModel @Inject constructor(
 // ─────────────────────────────────────────────────────────────────────────────
 // Settings Screen
 // ─────────────────────────────────────────────────────────────────────────────
-
 
 @Preview(showBackground = true, showSystemUi = true, name = "Settings")
 @Composable
@@ -98,30 +187,81 @@ private fun SettingsScreenPreview() {
             onNotifyNewScribblesChange = {},
             onNotifyReactionsChange = {},
             onContactSyncChange = {},
+            onSyncNow = {},
             onBack = {},
-            onNavigateToProfile = {},
+            onNavigateToEditProfile = {},
             onSignOut = {},
         )
     }
 }
+
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit = {},
     onNavigateToCircle: () -> Unit = {},
     onSignedOut: () -> Unit = {},
-    onNavigateToProfile: () -> Unit = {},
+    onNavigateToEditProfile: () -> Unit = {},
     onNavigateToScreenPreview: () -> Unit = {},
+    onContactSyncChange: ((Boolean) -> Unit)? = null,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
-    val user by viewModel.currentUser.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val firestoreUser by viewModel.firestoreUser.collectAsStateWithLifecycle()
+    val isSyncEnabledInVm by viewModel.isContactSyncEnabled.collectAsStateWithLifecycle()
 
     var showDoodlePreview by remember { mutableStateOf(true) }
     var notifyNewScribbles by remember { mutableStateOf(true) }
     var notifyReactions by remember { mutableStateOf(false) }
-    var contactSync by remember { mutableStateOf(false) }
+
+    // Check if READ_CONTACTS permission is granted
+    val hasPermission = remember(context) {
+        ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.READ_CONTACTS
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    var contactSync by remember { mutableStateOf(hasPermission || isSyncEnabledInVm) }
+
+    // Permission launcher for requesting READ_CONTACTS from the system
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            contactSync = true
+            viewModel.enableContactSync()
+            onContactSyncChange?.invoke(true)
+        } else {
+            contactSync = false
+            viewModel.disableContactSync()
+            onContactSyncChange?.invoke(false)
+        }
+    }
+
+    val handleContactSyncToggle: (Boolean) -> Unit = { enabled ->
+        if (enabled) {
+            val isCurrentlyGranted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.READ_CONTACTS
+            ) == PackageManager.PERMISSION_GRANTED
+
+            if (isCurrentlyGranted) {
+                contactSync = true
+                viewModel.enableContactSync()
+                onContactSyncChange?.invoke(true)
+            } else {
+                // Ask for READ_CONTACTS permission
+                permissionLauncher.launch(Manifest.permission.READ_CONTACTS)
+            }
+        } else {
+            contactSync = false
+            viewModel.disableContactSync()
+            onContactSyncChange?.invoke(false)
+        }
+    }
 
     SettingsScreenContent(
-        displayName = user?.displayName?.takeIf { it.isNotBlank() } ?: "",
+        displayName = firestoreUser?.displayName?.takeIf { it.isNotBlank() } ?: "",
         showDoodlePreview = showDoodlePreview,
         notifyNewScribbles = notifyNewScribbles,
         notifyReactions = notifyReactions,
@@ -129,9 +269,10 @@ fun SettingsScreen(
         onShowDoodlePreviewChange = { showDoodlePreview = it },
         onNotifyNewScribblesChange = { notifyNewScribbles = it },
         onNotifyReactionsChange = { notifyReactions = it },
-        onContactSyncChange = { contactSync = it },
+        onContactSyncChange = handleContactSyncToggle,
+        onSyncNow = { viewModel.syncContactsNow() },
         onBack = onBack,
-        onNavigateToProfile = onNavigateToProfile,
+        onNavigateToEditProfile = onNavigateToEditProfile,
         onSignOut = { viewModel.signOut(onSignedOut) },
     )
 }
@@ -147,11 +288,11 @@ private fun SettingsScreenContent(
     onNotifyNewScribblesChange: (Boolean) -> Unit,
     onNotifyReactionsChange: (Boolean) -> Unit,
     onContactSyncChange: (Boolean) -> Unit,
+    onSyncNow: () -> Unit,
     onBack: () -> Unit,
-    onNavigateToProfile: () -> Unit,
+    onNavigateToEditProfile: () -> Unit,
     onSignOut: () -> Unit,
 ) {
-    // Local toggle state — V2: persist to Firestore / DataStore
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -234,16 +375,45 @@ private fun SettingsScreenContent(
 
         SettingsToggleRow(
             title = "Contact sync",
-            subtitle = "Find friends on Sketchly automatically • Last synced 2m ago",
+            subtitle = "Find friends on Sketchly automatically • Periodic sync every 15m",
             checked = contactSync,
             onCheckedChange = onContactSyncChange,
         )
+
+        if (contactSync) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                    ) { onSyncNow() }
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = "Sync contacts now",
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 15.sp,
+                    ),
+                    color = ButtonGold,
+                )
+                Icon(
+                    imageVector = Icons.AutoMirrored.Rounded.ArrowForwardIos,
+                    contentDescription = "Sync now",
+                    tint = ButtonGold,
+                    modifier = Modifier.size(14.dp),
+                )
+            }
+        }
 
         RowDivider()
 
         SettingsNavRow(
             title = "Edit profile",
-            onClick = onNavigateToProfile,
+            onClick = onNavigateToEditProfile,
         )
 
         RowDivider()
@@ -317,7 +487,9 @@ private fun SettingsToggleRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+        Column(modifier = Modifier
+            .weight(1f)
+            .padding(end = 12.dp)) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.bodyLarge.copy(

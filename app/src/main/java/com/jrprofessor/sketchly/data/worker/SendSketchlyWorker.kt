@@ -50,7 +50,7 @@ class SendSketchlyWorker @AssistedInject constructor(
                 "createdAt" to entity.createdAt,
             )
 
-            firestore.collection("sketches").document(entity.id).set(firestoreData).await()
+            firestore.collection("scribbles").document(entity.id).set(firestoreData).await()
 
             Result.success()
         } catch (e: Exception) {

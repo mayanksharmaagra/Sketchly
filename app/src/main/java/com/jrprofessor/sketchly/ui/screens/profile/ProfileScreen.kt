@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.outlined.Edit
@@ -36,6 +35,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -46,11 +47,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jrprofessor.sketchly.ui.theme.AppNameColor
 import com.jrprofessor.sketchly.ui.theme.BgColor
 import com.jrprofessor.sketchly.ui.theme.ButtonGold
-import com.jrprofessor.sketchly.ui.theme.PaperIvory
 import com.jrprofessor.sketchly.ui.theme.PillShape
 import com.jrprofessor.sketchly.ui.theme.TextEditorBorderColor
 import com.jrprofessor.sketchly.ui.theme.TextMuted
 import androidx.compose.ui.tooling.preview.Preview
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.jrprofessor.sketchly.ui.screens.settings.SettingsViewModel
 import com.jrprofessor.sketchly.ui.theme.SketchlyTheme
 
@@ -69,6 +71,7 @@ private fun ProfileScreenPreview() {
             onBack = {},
             onOpenSettings = {},
             onEditProfile = {},
+            avatarUrl = null,
         )
     }
 }
@@ -85,9 +88,10 @@ fun ProfileScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val user by viewModel.currentUser.collectAsStateWithLifecycle()
+    val firebaseUser by viewModel.firestoreUser.collectAsStateWithLifecycle()
 
-    val displayName = user?.displayName?.takeIf { it.isNotBlank() } ?: "Sketchly User"
-    val email = user?.email?.takeIf { it.isNotBlank() }
+    val displayName = firebaseUser?.displayName?.takeIf { it.isNotBlank() } ?: "Sketchly User"
+    val email = firebaseUser?.email?.takeIf { it.isNotBlank() }
         ?: user?.phoneNumber?.takeIf { it.isNotBlank() }
         ?: ""
 
@@ -101,6 +105,7 @@ fun ProfileScreen(
     ProfileScreenContent(
         initials = initials,
         displayName = displayName,
+        avatarUrl = firebaseUser?.avatarUrl,
         email = email,
         onBack = onBack,
         onOpenSettings = onOpenSettings,
@@ -116,6 +121,7 @@ private fun ProfileScreenContent(
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
     onEditProfile: () -> Unit,
+    avatarUrl: String?,
 ) {
     Column(
         modifier = Modifier
@@ -166,14 +172,28 @@ private fun ProfileScreenContent(
                     .border(1.5.dp, AppNameColor.copy(alpha = 0.20f), CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    text = initials,
-                    style = MaterialTheme.typography.displayMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 44.sp,
-                    ),
-                    color = AppNameColor,
-                )
+                if (!avatarUrl.isNullOrEmpty()) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(avatarUrl)
+                            .crossfade(true)           // smooth fade-in
+                            .build(),
+                        contentDescription = initials,
+                        contentScale = ContentScale.Crop,  // scale fit — fills the circle, crops edges
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(CircleShape),
+                    )
+                } else {
+                    Text(
+                        text = initials,
+                        style = MaterialTheme.typography.displayMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 44.sp,
+                        ),
+                        color = AppNameColor,
+                    )
+                }
             }
 
             // Edit badge

@@ -181,8 +181,8 @@ fun SketchlyNavGraph(
                         popUpTo(0) { inclusive = true }
                     }
                 },
-                onNavigateToProfile = {
-                    navController.navigate(Screen.Profile.route)
+                onNavigateToEditProfile = {
+                    navController.navigate(Screen.EditProfile.route)
                 },
                 onNavigateToScreenPreview = {
                     navController.navigate(Screen.ScreenPreview.route)

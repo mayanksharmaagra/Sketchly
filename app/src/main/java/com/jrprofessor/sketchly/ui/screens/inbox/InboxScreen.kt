@@ -254,7 +254,7 @@ fun InboxScreenContent(
                         .weight(1f),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    items(sketches, key = { it.id }) { sketch ->
+                    items(sketches.distinctBy { it.id }, key = { it.id }) { sketch ->
                         InboxSketchCard(
                             sketch = sketch,
                             onClick = { onSketchTap(sketch.id) },

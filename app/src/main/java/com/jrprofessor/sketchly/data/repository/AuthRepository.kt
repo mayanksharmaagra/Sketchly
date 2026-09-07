@@ -12,7 +12,7 @@ import com.google.firebase.firestore.SetOptions
 import com.google.firebase.functions.FirebaseFunctions
 import com.google.firebase.messaging.FirebaseMessaging
 import com.jrprofessor.sketchly.BuildConfig
-import com.jrprofessor.sketchly.data.local.SketchlyDatabase
+// V1: Room DB hidden — import com.jrprofessor.sketchly.data.local.SketchlyDatabase
 import com.jrprofessor.sketchly.data.model.User
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -28,7 +28,7 @@ class AuthRepository @Inject constructor(
     private val auth: FirebaseAuth,
     private val firestore: FirebaseFirestore,
     private val functions: FirebaseFunctions,
-    private val db: SketchlyDatabase,
+    // V1: Room DB hidden — private val db: SketchlyDatabase,
 ) {
 
     // ── Current user accessors ─────────────────────────────────────────────
@@ -432,8 +432,9 @@ class AuthRepository @Inject constructor(
 
     suspend fun signOut() {
         auth.signOut()
+        // V1: Room DB hidden — db.clearAllTables() skipped (no local cache in V1)
         // SRS FR-1.7: On logout, clear cached Sketch and contact data from local database
-        db.clearAllTables()
+        // db.clearAllTables()
     }
 
     // ── Utilities ─────────────────────────────────────────────────────────

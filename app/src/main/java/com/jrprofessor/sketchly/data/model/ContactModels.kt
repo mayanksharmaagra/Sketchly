@@ -3,6 +3,7 @@ package com.jrprofessor.sketchly.data.model
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import com.jrprofessor.sketchly.data.local.ContactEntity
 
 // ============================================================
 // Domain model — what the UI sees
@@ -71,3 +72,16 @@ fun SketchlyContact.toEntity() = SketchlyContactEntity(
     source = source.name,
     connectionStatus = connectionStatus.name,
 )
+
+fun SketchlyContact.toContactEntity(currentUid: String = ""): ContactEntity =
+    ContactEntity(
+        id = userId,
+        userId = currentUid,
+        contactUserId = userId,
+        displayName = displayName,
+        phoneNumber = if (!phoneLastFour.isNullOrBlank()) "•••• $phoneLastFour" else "",
+        email = if (username.isNotBlank()) "@$username" else "",
+        avatarUrl = avatarUrl ?: "",
+        source = source.name,
+        isOnSketchly = true,
+    )

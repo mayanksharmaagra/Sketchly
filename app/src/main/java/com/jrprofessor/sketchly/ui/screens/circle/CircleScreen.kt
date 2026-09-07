@@ -213,36 +213,36 @@ fun CircleScreenContent(
             }
         }
 
-        // ── FAB — Add Friend ─────────────────────────────────────────────────
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .navigationBarsPadding()
-                .padding(24.dp),
-        ) {
-            AddFab(onClick = onOpenAddDialog)
-        }
+        // ── FAB — Add Friend (V1: HIDDEN — manual contact add removed) ─────
+        // Box(
+        //     modifier = Modifier
+        //         .align(Alignment.BottomEnd)
+        //         .navigationBarsPadding()
+        //         .padding(24.dp),
+        // ) {
+        //     AddFab(onClick = onOpenAddDialog)
+        // }
 
-        // ── Add Friend bottom sheet ──────────────────────────────────────────
-        AnimatedVisibility(
-            visible = uiState.isAddDialogOpen,
-            enter = fadeIn() + slideInVertically(
-                spring(Spring.DampingRatioMediumBouncy),
-                initialOffsetY = { it },
-            ),
-            exit = fadeOut() + slideOutVertically { it },
-        ) {
-            AddFriendSheet(
-                name = uiState.newContactName,
-                onNameChange = onNameChanged,
-                emailOrPhone = uiState.newContactEmailOrPhone,
-                onEmailOrPhoneChange = onEmailOrPhoneChanged,
-                isLoading = uiState.isLoading,
-                errorMessage = uiState.errorMessage,
-                onConfirm = onAddContact,
-                onDismiss = onCloseAddDialog,
-            )
-        }
+        // ── Add Friend bottom sheet (V1: HIDDEN) ──────────────────────────
+        // AnimatedVisibility(
+        //     visible = uiState.isAddDialogOpen,
+        //     enter = fadeIn() + slideInVertically(
+        //         spring(Spring.DampingRatioMediumBouncy),
+        //         initialOffsetY = { it },
+        //     ),
+        //     exit = fadeOut() + slideOutVertically { it },
+        // ) {
+        //     AddFriendSheet(
+        //         name = uiState.newContactName,
+        //         onNameChange = onNameChanged,
+        //         emailOrPhone = uiState.newContactEmailOrPhone,
+        //         onEmailOrPhoneChange = onEmailOrPhoneChanged,
+        //         isLoading = uiState.isLoading,
+        //         errorMessage = uiState.errorMessage,
+        //         onConfirm = onAddContact,
+        //         onDismiss = onCloseAddDialog,
+        //     )
+        // }
     }
 }
 
@@ -265,47 +265,24 @@ private fun CircleScreenEmptyPreview() {
     }
 }
 
-@Preview(name = "Circle — With Contacts", showBackground = true)
-@Composable
-private fun CircleScreenWithContactsPreview() {
-    val fakeContacts = listOf(
-        ContactEntity(
-            id = "1",
-            displayName = "Alice Wonderland",
-            email = "alice@example.com",
-            phoneNumber = "",
-            isOnSketchly = true,
-            avatarUrl = "",
-            source = "manual",
-            createdAt = System.currentTimeMillis(),
-            userId = ""
-
-        ),
-        ContactEntity(
-            id = "2",
-            displayName = "Bob Builder",
-            email = "",
-            phoneNumber = "+1 555 000",
-            isOnSketchly = false,
-            avatarUrl = "",
-            source = "manual",
-            createdAt = System.currentTimeMillis(),
-            userId = ""
-        ),
-    )
-    SketchlyTheme {
-        CircleScreenContent(
-            contacts = fakeContacts,
-            uiState = CircleUiState(),
-            onDeleteContact = {},
-            onOpenAddDialog = {},
-            onCloseAddDialog = {},
-            onNameChanged = {},
-            onEmailOrPhoneChanged = {},
-            onAddContact = {},
-        )
-    }
-}
+// V1: CircleScreenWithContactsPreview hidden — uses ContactEntity (Room type hidden)
+// @Preview(name = "Circle — With Contacts", showBackground = true)
+// @Composable
+// private fun CircleScreenWithContactsPreview() {
+//     val fakeContacts = listOf(
+//         ContactEntity(id = "1", displayName = "Alice Wonderland", email = "alice@example.com",
+//             phoneNumber = "", isOnSketchly = true, avatarUrl = "", source = "manual",
+//             createdAt = System.currentTimeMillis(), userId = ""),
+//         ContactEntity(id = "2", displayName = "Bob Builder", email = "", phoneNumber = "+1 555 000",
+//             isOnSketchly = false, avatarUrl = "", source = "manual",
+//             createdAt = System.currentTimeMillis(), userId = ""),
+//     )
+//     SketchlyTheme {
+//         CircleScreenContent(contacts = fakeContacts, uiState = CircleUiState(),
+//             onDeleteContact = {}, onOpenAddDialog = {}, onCloseAddDialog = {},
+//             onNameChanged = {}, onEmailOrPhoneChanged = {}, onAddContact = {})
+//     }
+// }
 
 
 // ─────────────────────────────────────────────────────────────────────────────

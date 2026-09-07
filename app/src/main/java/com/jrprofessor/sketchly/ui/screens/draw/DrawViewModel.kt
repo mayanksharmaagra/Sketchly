@@ -10,6 +10,7 @@ import com.jrprofessor.sketchly.data.model.colorToHex
 import com.jrprofessor.sketchly.data.repository.AuthRepository
 import com.jrprofessor.sketchly.data.repository.ContactRepository
 import com.jrprofessor.sketchly.data.repository.SketchlyRepository
+import com.jrprofessor.sketchly.data.model.toContactEntity
 import com.jrprofessor.sketchly.ui.theme.DeepCharcoal
 import com.jrprofessor.sketchly.ui.theme.InkDefault
 import com.jrprofessor.sketchly.ui.theme.Primary
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
@@ -68,7 +70,13 @@ class DrawViewModel @Inject constructor(
     val contacts: StateFlow<List<ContactEntity>> = authRepository.authState
         .flatMapLatest { user ->
             if (user != null) {
-                contactRepository.getContacts(user.uid)
+                combine(
+                    contactRepository.getSuggestedContacts(),
+                    contactRepository.getConnectedContacts(),
+                ) { suggested, connected ->
+                    val allList = (suggested + connected).distinctBy { it.userId }
+                    allList.map { it.toContactEntity(user.uid) }
+                }
             } else {
                 flowOf(emptyList())
             }

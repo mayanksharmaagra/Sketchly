@@ -5,12 +5,14 @@ import androidx.lifecycle.viewModelScope
 import com.jrprofessor.sketchly.data.local.ContactEntity
 import com.jrprofessor.sketchly.data.repository.AuthRepository
 import com.jrprofessor.sketchly.data.repository.ContactRepository
+import com.jrprofessor.sketchly.data.model.toContactEntity
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
@@ -37,10 +39,17 @@ class CircleViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(CircleUiState())
     val uiState: StateFlow<CircleUiState> = _uiState.asStateFlow()
 
+    // Contacts synced via Contact Sync + connected contacts
     val contacts: StateFlow<List<ContactEntity>> = authRepository.authState
         .flatMapLatest { user ->
             if (user != null) {
-                contactRepository.getContacts(user.uid)
+                combine(
+                    contactRepository.getSuggestedContacts(),
+                    contactRepository.getConnectedContacts(),
+                ) { suggested, connected ->
+                    val allList = (suggested + connected).distinctBy { it.userId }
+                    allList.map { it.toContactEntity(user.uid) }
+                }
             } else {
                 flowOf(emptyList())
             }
@@ -71,61 +80,14 @@ class CircleViewModel @Inject constructor(
         _uiState.update { it.copy(newContactEmailOrPhone = input, errorMessage = null) }
     }
 
+    // V1: addContact() hidden — manual contact add removed, use contact sync
     fun addContact() {
-        val state = _uiState.value
-        val name = state.newContactName.trim()
-        val emailOrPhone = state.newContactEmailOrPhone.trim()
-
-        if (name.isBlank()) {
-            _uiState.update { it.copy(errorMessage = "Please enter a name for your contact.") }
-            return
-        }
-
-        val currentUserId = authRepository.currentUserId
-        if (currentUserId == null) {
-            _uiState.update { it.copy(errorMessage = "You must be signed in to add contacts.") }
-            return
-        }
-
-        _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-
-        viewModelScope.launch {
-            val isEmail = emailOrPhone.contains("@")
-            val email = if (isEmail) emailOrPhone else ""
-            val phone = if (!isEmail && emailOrPhone.isNotBlank()) emailOrPhone else ""
-
-            val result = contactRepository.addContact(
-                userId = currentUserId,
-                displayName = name,
-                email = email,
-                phone = phone
-            )
-
-            result.fold(
-                onSuccess = {
-                    _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            isAddDialogOpen = false,
-                            successMessage = "Contact added!"
-                        )
-                    }
-                },
-                onFailure = { err ->
-                    _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            errorMessage = err.localizedMessage ?: "Failed to add contact."
-                        )
-                    }
-                }
-            )
-        }
+        // V1 HIDDEN: contactRepository.addContact()
+        _uiState.update { it.copy(isAddDialogOpen = false) }
     }
 
+    // V1: deleteContact() hidden — Room-based, no local contact list in V1
     fun deleteContact(contact: ContactEntity) {
-        viewModelScope.launch {
-            contactRepository.deleteContact(contact)
-        }
+        // V1 HIDDEN: contactRepository.deleteContact(contact)
     }
 }

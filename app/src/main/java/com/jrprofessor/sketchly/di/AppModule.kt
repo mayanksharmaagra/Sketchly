@@ -6,7 +6,8 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.functions.FirebaseFunctions
 import com.google.firebase.storage.FirebaseStorage
-import com.jrprofessor.sketchly.data.local.ContactDao
+// V1: ContactDao hidden (contact Room logic removed)
+// import com.jrprofessor.sketchly.data.local.ContactDao
 import com.jrprofessor.sketchly.data.local.SketchlyDao
 import com.jrprofessor.sketchly.data.local.SketchlyDatabase
 import com.jrprofessor.sketchly.data.repository.AuthRepository
@@ -41,9 +42,12 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideFirebaseStorage(): FirebaseStorage = FirebaseStorage.getInstance()
+    fun provideFirebaseStorage(): FirebaseStorage =
+        FirebaseStorage.getInstance("gs://sketchly-44c83.firebasestorage.app")
 
-    // ── Room Database ─────────────────────────────────────────────────────
+    // ── Room Database ──────────────────────────────────────────────────
+    // SketchlyDatabase + SketchlyDao: ACTIVE (needed for SketchlyRepository / draft)
+    // ContactDao: V1 HIDDEN (contact Room logic removed)
 
     @Provides
     @Singleton
@@ -54,9 +58,9 @@ object AppModule {
     @Singleton
     fun provideSketchlyDao(db: SketchlyDatabase): SketchlyDao = db.sketchDao()
 
-    @Provides
-    @Singleton
-    fun provideContactDao(db: SketchlyDatabase): ContactDao = db.contactDao()
+    // V1: ContactDao hidden — preserved for V2
+    // @Provides @Singleton
+    // fun provideContactDao(db: SketchlyDatabase): ContactDao = db.contactDao()
 
     // ── WorkManager ───────────────────────────────────────────────────────
 
@@ -73,8 +77,8 @@ object AppModule {
         auth: FirebaseAuth,
         firestore: FirebaseFirestore,
         functions: FirebaseFunctions,
-        db: SketchlyDatabase,
-    ): AuthRepository = AuthRepository(auth, firestore, functions, db)
+        // V1: Room DB hidden — db: SketchlyDatabase,
+    ): AuthRepository = AuthRepository(auth, firestore, functions)
 
     @Provides
     @Singleton
@@ -88,11 +92,11 @@ object AppModule {
     @Singleton
     fun provideContactRepository(
         @ApplicationContext context: Context,
-        contactDao: ContactDao,
+        // V1: Room ContactDao hidden — contactDao: ContactDao,
         firestore: FirebaseFirestore,
         auth: FirebaseAuth,
         functions: FirebaseFunctions,
-    ): ContactRepository = ContactRepository(contactDao, firestore, auth, functions, context)
+    ): ContactRepository = ContactRepository(firestore, auth, functions, context)
 
     @Provides
     @Singleton

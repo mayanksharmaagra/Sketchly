@@ -1,11 +1,8 @@
 package com.jrprofessor.sketchly.ui.screens.dashboard
 
+// Log removed — was only used for debug FirebaseUser dump
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -43,6 +40,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -53,6 +52,11 @@ import com.jrprofessor.sketchly.ui.theme.SketchlyTheme
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.Coil
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import coil.size.Scale
+// Gson removed — no longer used
 import com.jrprofessor.sketchly.data.model.Sketch
 import com.jrprofessor.sketchly.ui.components.SketchlyThumbnail
 import com.jrprofessor.sketchly.ui.screens.inbox.InboxViewModel
@@ -89,10 +93,10 @@ private fun avatarColor(seed: String) =
 
 private fun greeting(): String {
     return when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
-        in 5..11  -> "Good morning"
+        in 5..11 -> "Good morning"
         in 12..16 -> "Good afternoon"
         in 17..20 -> "Good evening"
-        else      -> "Good night"
+        else -> "Good night"
     }
 }
 
@@ -115,6 +119,7 @@ private fun DashboardScreenPreview() {
             onDrawTap = {},
             onCircleTap = {},
             onProfileTap = {},
+            avatarUrl = null,
         )
     }
 }
@@ -134,6 +139,7 @@ private fun DashboardScreenOfflinePreview() {
             onDrawTap = {},
             onCircleTap = {},
             onProfileTap = {},
+            avatarUrl = null,
         )
     }
 }
@@ -147,14 +153,17 @@ fun DashboardScreen(
     inboxViewModel: InboxViewModel = hiltViewModel(),
     settingsViewModel: SettingsViewModel = hiltViewModel(),
 ) {
-    val sketches by inboxViewModel.inboxSketches.collectAsStateWithLifecycle()
+    val sketches by inboxViewModel.recentSketches.collectAsStateWithLifecycle()
     val unreadCount by inboxViewModel.unreadCount.collectAsStateWithLifecycle()
     val isInitialLoading by inboxViewModel.isInitialLoading.collectAsStateWithLifecycle()
     val isOnline by inboxViewModel.isOnline.collectAsStateWithLifecycle()
-    val user by settingsViewModel.currentUser.collectAsStateWithLifecycle()
 
-    val displayName = user?.displayName?.takeIf { it.isNotBlank() }
-        ?: user?.email?.substringBefore("@")?.takeIf { it.isNotBlank() }
+    // firestoreUser = Firestore User doc — real displayName, username etc.
+    // FirebaseUser.displayName is ALWAYS null for phone-auth users.
+    val firestoreUser by settingsViewModel.firestoreUser.collectAsStateWithLifecycle()
+
+    val displayName = firestoreUser?.displayName?.takeIf { it.isNotBlank() }
+        ?: firestoreUser?.username?.takeIf { it.isNotBlank() }
         ?: "Creator"
 
     val firstName = displayName.split(" ").firstOrNull() ?: "Creator"
@@ -165,19 +174,20 @@ fun DashboardScreen(
         .joinToString("").ifEmpty { "?" }
 
     DashboardContent(
-        initials         = initials,
-        firstName        = firstName,
-        sketches         = sketches,
-        unreadCount      = unreadCount,
+        initials = initials,
+        avatarUrl = firestoreUser?.avatarUrl,
+        firstName = firstName,
+        sketches = sketches,
+        unreadCount = unreadCount,
         isInitialLoading = isInitialLoading,
-        isOnline         = isOnline,
-        onSketchTap      = { sketch ->
+        isOnline = isOnline,
+        onSketchTap = { sketch ->
             inboxViewModel.markAsRead(sketch.id)
             onSketchTap(sketch.id)
         },
-        onDrawTap        = onDrawTap,
-        onCircleTap      = onCircleTap,
-        onProfileTap     = onProfileTap,
+        onDrawTap = onDrawTap,
+        onCircleTap = onCircleTap,
+        onProfileTap = onProfileTap,
     )
 }
 
@@ -193,6 +203,7 @@ internal fun DashboardContent(
     onDrawTap: () -> Unit,
     onCircleTap: () -> Unit,
     onProfileTap: () -> Unit,
+    avatarUrl: String?,
 ) {
 
     Box(
@@ -208,6 +219,7 @@ internal fun DashboardContent(
             // ── Top Bar ───────────────────────────────────────────────────────
             DashTopBar(
                 initials = initials,
+                avatarUrl = avatarUrl,
                 onCircleTap = onCircleTap,
                 onProfileTap = onProfileTap,
             )
@@ -306,7 +318,7 @@ internal fun DashboardContent(
                         isInitialLoading -> SkeletonActivityList()
                         sketches.isEmpty() -> EmptyActivityState(onDrawTap = onDrawTap)
                         else -> ActivityList(
-                            sketches    = sketches,
+                            sketches = sketches,
                             onSketchTap = onSketchTap,
                         )
                     }
@@ -343,6 +355,7 @@ private fun DashTopBar(
     initials: String,
     onCircleTap: () -> Unit,
     onProfileTap: () -> Unit,
+    avatarUrl: String?,
 ) {
     Row(
         modifier = Modifier
@@ -401,14 +414,28 @@ private fun DashTopBar(
                     ) { onProfileTap() },
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    text = initials,
-                    style = MaterialTheme.typography.titleSmall.copy(
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp,
-                    ),
-                    color = AppNameColor,
-                )
+                if (!avatarUrl.isNullOrEmpty()) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(avatarUrl)
+                            .crossfade(true)           // smooth fade-in
+                            .build(),
+                        contentDescription = initials,
+                        contentScale = ContentScale.Crop,  // scale fit — fills the circle, crops edges
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(CircleShape),
+                    )
+                } else {
+                    Text(
+                        text = initials,
+                        style = MaterialTheme.typography.titleSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                        ),
+                        color = AppNameColor,
+                    )
+                }
             }
         }
     }
@@ -427,7 +454,7 @@ private fun ActivityList(
         contentPadding = PaddingValues(bottom = 120.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
-        items(sketches, key = { it.id }) { sketch ->
+        items(sketches.distinctBy { it.id }, key = { it.id }) { sketch ->
             ActivityRow(sketch = sketch, onClick = { onSketchTap(sketch) })
             Box(
                 modifier = Modifier
@@ -591,7 +618,11 @@ private fun EmptyActivityState(onDrawTap: () -> Unit) {
 
 @Composable
 private fun SkeletonActivityList() {
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+    ) {
         repeat(3) {
             Row(
                 modifier = Modifier

@@ -77,7 +77,7 @@ class SketchlyRepository @Inject constructor(
 
         // Try fetching remote if not in local Room
         return try {
-            val doc = firestore.collection("sketches").document(id).get().await()
+            val doc = firestore.collection("scribbles").document(id).get().await()
             if (doc.exists()) {
                 val entity = docToEntity(doc.data ?: emptyMap(), id)
                 sketchDao.insert(entity)
@@ -157,7 +157,7 @@ class SketchlyRepository @Inject constructor(
                 "backgroundColor" to backgroundColor,
                 "createdAt" to now,
             )
-            firestore.collection("sketches").document(sketchId).set(firestoreData).await()
+            firestore.collection("scribbles").document(sketchId).set(firestoreData).await()
             // M3 (Architecture §4 step 6): sender's own widget refreshes immediately after send
             scheduleWidgetUpdate(sketchId)
             return Result.success(domainSketch)
@@ -195,7 +195,7 @@ class SketchlyRepository @Inject constructor(
         stopListeningToInbox()
         if (userId.isBlank()) return
 
-        inboxListenerRegistration = firestore.collection("sketches")
+        inboxListenerRegistration = firestore.collection("scribbles")
             .whereArrayContains("recipientIds", userId)
             .addSnapshotListener { snapshots, error ->
                 if (error != null || snapshots == null) return@addSnapshotListener
@@ -240,15 +240,16 @@ class SketchlyRepository @Inject constructor(
         if (sketchId.isBlank()) return
 
         reactionListenerRegistration = firestore.collection("reactions")
-            .whereEqualTo("sketchId", sketchId)
+            .whereEqualTo("scribbleId", sketchId)
             .addSnapshotListener { snapshots, error ->
                 if (error != null || snapshots == null) return@addSnapshotListener
 
                 scope.launch {
                     val reactions = snapshots.documents.mapNotNull { doc ->
                         val data = doc.data ?: return@mapNotNull null
+                        val sid = data["scribbleId"] as? String ?: data["sketchId"] as? String ?: ""
                         Reaction(
-                            sketchId = data["sketchId"] as? String ?: "",
+                            sketchId = sid,
                             userId = data["userId"] as? String ?: "",
                             userName = data["userName"] as? String ?: "",
                             emoji = data["emoji"] as? String ?: "",
@@ -270,6 +271,7 @@ class SketchlyRepository @Inject constructor(
 
     suspend fun sendReaction(sketchId: String, userId: String, userName: String, emoji: String) {
         val reactionData = hashMapOf(
+            "scribbleId" to sketchId,
             "sketchId" to sketchId,
             "userId" to userId,
             "userName" to userName,

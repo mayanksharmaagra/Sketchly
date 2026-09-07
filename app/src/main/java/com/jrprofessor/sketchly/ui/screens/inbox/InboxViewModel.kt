@@ -34,6 +34,9 @@ class InboxViewModel @Inject constructor(
     val inboxSketches: StateFlow<List<Sketch>> = sketchRepository.getInboxSketches()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val recentSketches: StateFlow<List<Sketch>> = sketchRepository.getAllHistory()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val unreadCount: StateFlow<Int> = sketchRepository.getUnreadCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
@@ -47,7 +50,7 @@ class InboxViewModel @Inject constructor(
     init {
         // Clear loading state once Room emits any value (first DB read is instant)
         viewModelScope.launch {
-            inboxSketches.collect {
+            recentSketches.collect {
                 _isInitialLoading.value = false
             }
         }

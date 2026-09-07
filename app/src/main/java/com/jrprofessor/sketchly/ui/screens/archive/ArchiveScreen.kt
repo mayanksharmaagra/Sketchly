@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.FilterChip
@@ -106,7 +107,8 @@ class ArchiveViewModel @Inject constructor(
     /** Sketches grouped by date label for sticky-header display */
     val groupedSketches: StateFlow<Map<String, List<Sketch>>> =
         _sketches.combine(_filter) { list, _ ->
-            list.groupBy { dateGroupLabel(it.createdAt) }
+            list.distinctBy { it.id }
+                .groupBy { dateGroupLabel(it.createdAt) }
                 .let { grouped ->
                     val order = listOf("Today", "Yesterday", "This Week", "Earlier")
                     linkedMapOf<String, List<Sketch>>().apply {
@@ -143,7 +145,7 @@ class ArchiveViewModel @Inject constructor(
             if (page.isEmpty()) {
                 _hasMore = false
             } else {
-                _sketches.update { current -> current + page }
+                _sketches.update { current -> (current + page).distinctBy { it.id } }
                 _currentPage++
                 if (page.size < pageSize) _hasMore = false
             }
@@ -154,7 +156,7 @@ class ArchiveViewModel @Inject constructor(
     private fun loadFirstPage() {
         viewModelScope.launch {
             val page = sketchRepository.getPagedHistory(_filter.value, 0, pageSize)
-            _sketches.update { page }
+            _sketches.update { page.distinctBy { it.id } }
             _currentPage = 1
             _hasMore = page.size >= pageSize
         }
@@ -317,7 +319,10 @@ fun ArchiveScreenContent(
 
                     // 2-column grid inside LazyColumn using manual row chunking (avoids nested LazyGrid)
                     val rows = sketches.chunked(2)
-                    items(rows, key = { row -> "row_${dateLabel}_${row.joinToString("_") { it.id }}" }) { rowItems ->
+                    itemsIndexed(
+                        rows,
+                        key = { rowIndex, row -> "row_${dateLabel}_${rowIndex}_${row.joinToString("_") { it.id }}" }
+                    ) { _, rowItems ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()

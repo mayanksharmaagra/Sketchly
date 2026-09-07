@@ -221,7 +221,7 @@ exports.onReactionCreate = onDocumentWritten(
  * (client should wait for countdown to finish before calling resend).
  */
 exports.sendEmailOtp = onCall(
-  {region: "us-central1", enforceAppCheck: false},
+  {region: "us-central1", enforceAppCheck: false, invoker: "public"},
   async (request) => {
     const email = request.data?.email;
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -307,7 +307,7 @@ exports.sendEmailOtp = onCall(
  * Throws HttpsError on failure so the Android client receives a typed error.
  */
 exports.verifyEmailOtp = onCall(
-  {region: "us-central1", enforceAppCheck: false},
+  {region: "us-central1", enforceAppCheck: false, invoker: "public"},
   async (request) => {
     const {email, otp} = request.data ?? {};
     if (!email || !otp) {
@@ -370,7 +370,7 @@ exports.verifyEmailOtp = onCall(
  *  7. Only users with isSearchable = true are returned.
  */
 exports.matchContactsByHash = onCall(
-  {region: "us-central1", enforceAppCheck: false},
+  {region: "us-central1", enforceAppCheck: false, invoker: "public"},
   async (request) => {
     // ── 1. Auth check ──────────────────────────────────────────
     if (!request.auth) {
@@ -617,15 +617,34 @@ exports.onFollowRequestAccept = onDocumentWritten(
     const connectionsRef = db.collection("connections");
 
     try {
+      const [fromDoc, toDoc] = await Promise.all([
+        db.collection("users").doc(fromUserId).get(),
+        db.collection("users").doc(toUserId).get(),
+      ]);
+      const fromData = fromDoc.exists ? fromDoc.data() : {};
+      const toData = toDoc.exists ? toDoc.data() : {};
+
       const batch = db.batch();
       batch.set(connectionsRef.doc(connectionId), {
         userAId: fromUserId,
         userBId: toUserId,
+        userId: toUserId,
+        displayName: toData.displayName || "Sketchly User",
+        username: toData.username || "",
+        avatarUrl: toData.avatarUrl || null,
+        source: "FOLLOW_REQUEST",
+        connectionStatus: "CONNECTED",
         createdAt: now,
       });
       batch.set(connectionsRef.doc(reverseId), {
         userAId: toUserId,
         userBId: fromUserId,
+        userId: fromUserId,
+        displayName: fromData.displayName || "Sketchly User",
+        username: fromData.username || "",
+        avatarUrl: fromData.avatarUrl || null,
+        source: "FOLLOW_REQUEST",
+        connectionStatus: "CONNECTED",
         createdAt: now,
       });
       await batch.commit();

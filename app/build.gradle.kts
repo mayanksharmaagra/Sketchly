@@ -76,6 +76,10 @@ dependencies {
     implementation(libs.firebase.messaging)
     implementation(libs.firebase.crashlytics)   // M5: crash reporting
     implementation(libs.firebase.perf)           // M5: performance monitoring
+    implementation(libs.firebase.storage)        // Avatar / media upload
+
+    // Coil (image loading)
+    implementation(libs.coil.compose)
 
     // WorkManager (retry/backoff for sends + widget updates)
     implementation(libs.androidx.work.runtime.ktx)
