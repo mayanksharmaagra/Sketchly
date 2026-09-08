@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -52,14 +53,12 @@ import com.jrprofessor.sketchly.ui.theme.SketchlyTheme
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil.Coil
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
-import coil.size.Scale
 // Gson removed — no longer used
 import com.jrprofessor.sketchly.data.model.Sketch
 import com.jrprofessor.sketchly.ui.components.SketchlyThumbnail
-import com.jrprofessor.sketchly.ui.screens.inbox.InboxViewModel
+import com.jrprofessor.sketchly.ui.components.TOP_BAR_HEIGHT
 import com.jrprofessor.sketchly.ui.screens.settings.SettingsViewModel
 import com.jrprofessor.sketchly.ui.theme.AppNameColor
 import com.jrprofessor.sketchly.ui.theme.BgColor
@@ -115,6 +114,7 @@ private fun DashboardScreenPreview() {
             unreadCount = 0,
             isInitialLoading = false,
             isOnline = true,
+            currentUserId = null,
             onSketchTap = {},
             onDrawTap = {},
             onCircleTap = {},
@@ -135,6 +135,7 @@ private fun DashboardScreenOfflinePreview() {
             unreadCount = 3,
             isInitialLoading = false,
             isOnline = false,
+            currentUserId = null,
             onSketchTap = {},
             onDrawTap = {},
             onCircleTap = {},
@@ -146,17 +147,18 @@ private fun DashboardScreenOfflinePreview() {
 
 @Composable
 fun DashboardScreen(
-    onSketchTap: (String) -> Unit = {},
+    onSketchTap: (Sketch) -> Unit = {},
     onDrawTap: () -> Unit = {},
     onCircleTap: () -> Unit = {},
     onProfileTap: () -> Unit = {},
-    inboxViewModel: InboxViewModel = hiltViewModel(),
+    dashboardViewModel: DashboardViewModel = hiltViewModel(),
     settingsViewModel: SettingsViewModel = hiltViewModel(),
 ) {
-    val sketches by inboxViewModel.recentSketches.collectAsStateWithLifecycle()
-    val unreadCount by inboxViewModel.unreadCount.collectAsStateWithLifecycle()
-    val isInitialLoading by inboxViewModel.isInitialLoading.collectAsStateWithLifecycle()
-    val isOnline by inboxViewModel.isOnline.collectAsStateWithLifecycle()
+    val sketches by dashboardViewModel.recentSketches.collectAsStateWithLifecycle()
+    val unreadCount by dashboardViewModel.unreadCount.collectAsStateWithLifecycle()
+    val isInitialLoading by dashboardViewModel.isInitialLoading.collectAsStateWithLifecycle()
+    val isOnline by dashboardViewModel.isOnline.collectAsStateWithLifecycle()
+    val currentUserId = dashboardViewModel.currentUserId
 
     // firestoreUser = Firestore User doc — real displayName, username etc.
     // FirebaseUser.displayName is ALWAYS null for phone-auth users.
@@ -181,9 +183,10 @@ fun DashboardScreen(
         unreadCount = unreadCount,
         isInitialLoading = isInitialLoading,
         isOnline = isOnline,
+        currentUserId = currentUserId,
         onSketchTap = { sketch ->
-            inboxViewModel.markAsRead(sketch.id)
-            onSketchTap(sketch.id)
+            dashboardViewModel.markAsRead(sketch.id)
+            onSketchTap(sketch)
         },
         onDrawTap = onDrawTap,
         onCircleTap = onCircleTap,
@@ -199,6 +202,7 @@ internal fun DashboardContent(
     unreadCount: Int,
     isInitialLoading: Boolean,
     isOnline: Boolean,
+    currentUserId: String?,
     onSketchTap: (Sketch) -> Unit,
     onDrawTap: () -> Unit,
     onCircleTap: () -> Unit,
@@ -209,12 +213,10 @@ internal fun DashboardContent(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(BgColor),
+            .background(BgColor)
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding(),
+            modifier = Modifier.fillMaxSize(),
         ) {
             // ── Top Bar ───────────────────────────────────────────────────────
             DashTopBar(
@@ -319,6 +321,7 @@ internal fun DashboardContent(
                         sketches.isEmpty() -> EmptyActivityState(onDrawTap = onDrawTap)
                         else -> ActivityList(
                             sketches = sketches,
+                            currentUserId = currentUserId,
                             onSketchTap = onSketchTap,
                         )
                     }
@@ -361,7 +364,9 @@ private fun DashTopBar(
         modifier = Modifier
             .fillMaxWidth()
             .background(ToolBarBgColor)
-            .padding(horizontal = 20.dp, vertical = 12.dp),
+            .statusBarsPadding()
+            .height(TOP_BAR_HEIGHT)
+            .padding(horizontal = 20.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -448,6 +453,7 @@ private fun DashTopBar(
 @Composable
 private fun ActivityList(
     sketches: List<Sketch>,
+    currentUserId: String?,
     onSketchTap: (Sketch) -> Unit,
 ) {
     LazyColumn(
@@ -455,7 +461,11 @@ private fun ActivityList(
         modifier = Modifier.fillMaxSize(),
     ) {
         items(sketches.distinctBy { it.id }, key = { it.id }) { sketch ->
-            ActivityRow(sketch = sketch, onClick = { onSketchTap(sketch) })
+            ActivityRow(
+                sketch = sketch,
+                currentUserId = currentUserId,
+                onClick = { onSketchTap(sketch) },
+            )
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -470,8 +480,10 @@ private fun ActivityList(
 @Composable
 private fun ActivityRow(
     sketch: Sketch,
+    currentUserId: String?,
     onClick: () -> Unit,
 ) {
+    val isSent = sketch.senderId == currentUserId
     val senderName = sketch.senderDisplayName.takeIf { it.isNotBlank() } ?: "Unknown"
     val initials = senderName.split(" ").take(2)
         .mapNotNull { it.firstOrNull()?.uppercaseChar() }
@@ -540,8 +552,10 @@ private fun ActivityRow(
                 overflow = TextOverflow.Ellipsis,
             )
             Spacer(modifier = Modifier.height(2.dp))
+            // Show correct direction: sent vs received
+            val subtitle = if (isSent) "You sent a doodle" else "Sent you a doodle"
             Text(
-                text = "Sent a doodle · \"${sketch.strokes.size} stroke${if (sketch.strokes.size != 1) "s" else ""}...\"",
+                text = subtitle,
                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
                 color = TextMuted,
                 maxLines = 1,

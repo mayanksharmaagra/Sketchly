@@ -61,6 +61,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.jrprofessor.sketchly.data.local.ContactEntity
+import com.jrprofessor.sketchly.ui.components.SketchlyTopBar
 import com.jrprofessor.sketchly.ui.theme.AppNameColor
 import com.jrprofessor.sketchly.ui.theme.BgColor
 import com.jrprofessor.sketchly.ui.theme.ButtonGold
@@ -124,9 +125,7 @@ fun SendToScreen(
             .background(BgColor),
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding(),
+            modifier = Modifier.fillMaxSize(),
         ) {
             // ── Top bar ──────────────────────────────────────────────────────
             SendToTopBar(onBack = onBack)
@@ -213,34 +212,10 @@ fun SendToScreen(
 
 @Composable
 private fun SendToTopBar(onBack: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 4.dp, vertical = 4.dp),
-    ) {
-        IconButton(
-            onClick = onBack,
-            modifier = Modifier.align(Alignment.CenterStart),
-        ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                contentDescription = "Back",
-                tint = AppNameColor,
-                modifier = Modifier.size(22.dp),
-            )
-        }
-
-        Text(
-            text = "Send to",
-            style = MaterialTheme.typography.titleLarge.copy(
-                fontWeight = FontWeight.Bold,
-                fontStyle = FontStyle.Italic,
-                fontSize = 24.sp,
-            ),
-            color = AppNameColor,
-            modifier = Modifier.align(Alignment.Center),
-        )
-    }
+    SketchlyTopBar(
+        title  = "Send to",
+        onBack = onBack,
+    )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

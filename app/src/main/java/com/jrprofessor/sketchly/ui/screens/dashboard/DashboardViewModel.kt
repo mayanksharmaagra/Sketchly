@@ -1,4 +1,4 @@
-package com.jrprofessor.sketchly.ui.screens.inbox
+package com.jrprofessor.sketchly.ui.screens.dashboard
 
 import android.content.Context
 import androidx.lifecycle.ViewModel
@@ -17,11 +17,14 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
-class InboxViewModel @Inject constructor(
+class DashboardViewModel @Inject constructor(
     private val authRepository: AuthRepository,
     private val sketchRepository: SketchlyRepository,
     @ApplicationContext private val appContext: Context,
 ) : ViewModel() {
+
+    /** UID of the signed-in user — used to determine sketch direction (sent vs received). */
+    val currentUserId: String? get() = authRepository.currentUserId
 
     /**
      * `true` from cold start until the first non-null emission from Room arrives.
@@ -42,7 +45,7 @@ class InboxViewModel @Inject constructor(
 
     /**
      * Emits `true` when the device has a validated internet connection.
-     * Drives the persistent offline banner in [InboxScreen] (UIUX §7).
+     * Drives the persistent offline banner in [DashboardScreen] (UIUX §7).
      */
     val isOnline: StateFlow<Boolean> = networkStatusFlow(appContext)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)

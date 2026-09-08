@@ -60,6 +60,7 @@ import com.google.firebase.auth.FirebaseUser
 import com.jrprofessor.sketchly.data.model.User
 import com.jrprofessor.sketchly.data.repository.AuthRepository
 import com.jrprofessor.sketchly.data.worker.ContactSyncWorker
+import com.jrprofessor.sketchly.ui.components.SketchlyTopBar
 import com.jrprofessor.sketchly.ui.theme.AppNameColor
 import com.jrprofessor.sketchly.ui.theme.BgColor
 import com.jrprofessor.sketchly.ui.theme.ButtonGold
@@ -198,10 +199,8 @@ private fun SettingsScreenPreview() {
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit = {},
-    onNavigateToCircle: () -> Unit = {},
     onSignedOut: () -> Unit = {},
     onNavigateToEditProfile: () -> Unit = {},
-    onNavigateToScreenPreview: () -> Unit = {},
     onContactSyncChange: ((Boolean) -> Unit)? = null,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
@@ -297,41 +296,22 @@ private fun SettingsScreenContent(
         modifier = Modifier
             .fillMaxSize()
             .background(BgColor)
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .verticalScroll(rememberScrollState()),
+            .navigationBarsPadding(),
     ) {
-        // ── Top Bar ───────────────────────────────────────────────────────────
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            IconButton(
-                onClick = onBack,
-                modifier = Modifier.align(Alignment.CenterStart),
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = "Back",
-                    tint = AppNameColor,
-                )
-            }
-            Text(
-                text = "Settings",
-                style = MaterialTheme.typography.titleLarge.copy(
-                    fontWeight = FontWeight.Bold,
-                    fontStyle = FontStyle.Italic,
-                    fontSize = 22.sp,
-                ),
-                color = AppNameColor,
-            )
-        }
+        // ── Top Bar ──────────────────────────────────────────────────────
+        SketchlyTopBar(
+            title  = "Settings",
+            onBack = onBack,
+        )
 
         HorizontalDivider(color = TextEditorBorderColor.copy(alpha = 0.5f))
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState()),
+        ) {
+            Spacer(modifier = Modifier.height(8.dp))
 
         // ── WIDGET section ────────────────────────────────────────────────────
         SectionLabel("WIDGET")
@@ -452,6 +432,7 @@ private fun SettingsScreenContent(
                 .align(Alignment.CenterHorizontally)
                 .padding(bottom = 16.dp),
         )
+        }
     }
 }
 

@@ -65,6 +65,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jrprofessor.sketchly.data.model.DrawPoint
 import com.jrprofessor.sketchly.data.model.Stroke
 import com.jrprofessor.sketchly.data.model.hexToColor
+import com.jrprofessor.sketchly.ui.components.SketchlyTopBar
 import com.jrprofessor.sketchly.ui.theme.AppNameColor
 import com.jrprofessor.sketchly.ui.theme.BgColor
 import com.jrprofessor.sketchly.ui.theme.ButtonGold
@@ -85,6 +86,7 @@ fun DrawScreen(
     drawViewModel: DrawViewModel = hiltViewModel(),
 ) {
     val uiState by drawViewModel.uiState.collectAsStateWithLifecycle()
+    val hasDrawnBefore by drawViewModel.hasDrawnBefore.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
     var isEraserActive by remember { mutableStateOf(false) }
@@ -102,6 +104,7 @@ fun DrawScreen(
 
     DrawScreenContent(
         uiState = uiState,
+        hasDrawnBefore = hasDrawnBefore,
         isEraserActive = isEraserActive,
         snackbarHostState = snackbarHostState,
         onNavigateBack = onNavigateBack,
@@ -121,6 +124,7 @@ fun DrawScreen(
 @Composable
 fun DrawScreenContent(
     uiState: DrawUiState,
+    hasDrawnBefore: Boolean = false,
     isEraserActive: Boolean,
     snackbarHostState: SnackbarHostState,
     onNavigateBack: () -> Unit,
@@ -132,18 +136,20 @@ fun DrawScreenContent(
     onStrokeEnd: () -> Unit,
     onUndo: () -> Unit,
 ) {
+    val topBarTitle = if (hasDrawnBefore) "New Scribble" else "Draw your first Scribble"
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(BgColor),
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding(),
+            modifier = Modifier.fillMaxSize(),
         ) {
             // ── Top bar ──────────────────────────────────────────────────────
-            DrawTopBar(onNavigateBack = onNavigateBack)
+            SketchlyTopBar(
+                title  = topBarTitle,
+                onBack = onNavigateBack,
+            )
 
             // ── Paper canvas area ─────────────────────────────────────────────
             Box(
@@ -241,44 +247,10 @@ private fun DrawScreenCanSendPreview() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Top Bar — back arrow + centered italic title
+// DrawTopBar is replaced by the common SketchlyTopBar. Kept as a no-op to
+// avoid unused-import warnings during the transition. Delete once all
+// references are confirmed removed.
 // ─────────────────────────────────────────────────────────────────────────────
-
-@Composable
-private fun DrawTopBar(onNavigateBack: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 4.dp, vertical = 4.dp),
-    ) {
-        IconButton(
-            onClick = onNavigateBack,
-            modifier = Modifier.align(Alignment.CenterStart),
-        ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                contentDescription = "Back",
-                tint = AppNameColor,
-                modifier = Modifier.size(22.dp),
-            )
-        }
-
-        Text(
-            text = "Draw your first\nScribble",
-            style = MaterialTheme.typography.titleLarge.copy(
-                fontWeight = FontWeight.Bold,
-                fontStyle = FontStyle.Italic,
-                fontSize = 22.sp,
-                lineHeight = 28.sp,
-            ),
-            color = AppNameColor,
-            textAlign = TextAlign.Center,
-            modifier = Modifier
-                .align(Alignment.Center)
-                .padding(horizontal = 52.dp),
-        )
-    }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hint Chip

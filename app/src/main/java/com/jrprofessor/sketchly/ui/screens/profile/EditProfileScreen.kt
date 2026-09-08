@@ -38,6 +38,7 @@ import androidx.core.content.FileProvider
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import com.jrprofessor.sketchly.ui.components.SketchlyTopBar
 import com.jrprofessor.sketchly.ui.theme.*
 import java.io.File
 
@@ -157,63 +158,42 @@ private fun EditProfileContent(
             .background(BgColor)
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-                .verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.fillMaxSize(),
         ) {
-
             // ── Top Bar ───────────────────────────────────────────────────────
-            Box(
+            SketchlyTopBar(
+                title = "Edit Profile",
+                onBack = onBack,
+                rightSlot = {
+                    /*TextButton(
+                        onClick = onSave,
+                        enabled = !uiState.isSaving && !uiState.isLoading,
+                    ) {
+                        if (uiState.isSaving) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = ButtonGold,
+                            )
+                        } else {
+                            Text(
+                                text = "Save",
+                                color = ButtonGold,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                            )
+                        }
+                    }*/
+                },
+            )
+
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 8.dp),
-                contentAlignment = Alignment.Center,
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                IconButton(
-                    onClick = onBack,
-                    modifier = Modifier.align(Alignment.CenterStart),
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                        contentDescription = "Back",
-                        tint = AppNameColor,
-                    )
-                }
-
-                Text(
-                    text = "Edit Profile",
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    fontStyle = FontStyle.Italic,
-                    color = AppNameColor,
-                )
-
-                // Top-right "Save" text button
-                TextButton(
-                    onClick = onSave,
-                    enabled = !uiState.isSaving && !uiState.isLoading,
-                    modifier = Modifier.align(Alignment.CenterEnd),
-                ) {
-                    if (uiState.isSaving) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp,
-                            color = ButtonGold,
-                        )
-                    } else {
-                        Text(
-                            text = "Save",
-                            color = ButtonGold,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(24.dp))
 
             // ── Avatar ────────────────────────────────────────────────────────
             Box(contentAlignment = Alignment.BottomEnd) {
@@ -485,6 +465,7 @@ private fun EditProfileContent(
             }
 
             Spacer(modifier = Modifier.height(40.dp))
+            }
         }
 
         // ── Loading overlay ───────────────────────────────────────────────────

@@ -69,7 +69,26 @@ class SketchlyRepository @Inject constructor(
         }
     }
 
+    fun getSentSketches(): Flow<List<Sketch>> {
+        return sketchDao.getSentSketches().map { entities ->
+            entities.map { entityToDomain(it) }
+        }
+    }
+
     fun getUnreadCount(): Flow<Int> = sketchDao.getUnreadCount()
+
+    /**
+     * Live flow of all sketches exchanged with a specific contact —
+     * both received from them and sent to them.
+     */
+    fun getSketchesWithContact(contactId: String): Flow<List<Sketch>> =
+        sketchDao.getSketchesWithContact(contactId).map { entities ->
+            entities.map { entityToDomain(it) }
+        }
+
+    /** Total count of sketches exchanged with a contact (for header stat). */
+    suspend fun getContactSketchCount(contactId: String): Int =
+        sketchDao.getContactSketchCount(contactId)
 
     suspend fun getSketchById(id: String): Sketch? {
         val local = sketchDao.getById(id)

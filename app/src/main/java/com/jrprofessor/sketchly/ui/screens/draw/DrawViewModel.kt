@@ -1,5 +1,7 @@
 package com.jrprofessor.sketchly.ui.screens.draw
 
+import android.content.Context
+import android.content.SharedPreferences
 import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -16,12 +18,14 @@ import com.jrprofessor.sketchly.ui.theme.InkDefault
 import com.jrprofessor.sketchly.ui.theme.Primary
 import com.jrprofessor.sketchly.ui.theme.Tertiary
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
@@ -59,10 +63,18 @@ data class DrawUiState(
 @OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class DrawViewModel @Inject constructor(
+    @ApplicationContext private val appContext: Context,
     private val authRepository: AuthRepository,
     private val contactRepository: ContactRepository,
     private val sketchRepository: SketchlyRepository,
 ) : ViewModel() {
+
+    private val prefs: SharedPreferences =
+        appContext.getSharedPreferences("sketchly_prefs", Context.MODE_PRIVATE)
+
+    private val _hasDrawnBefore = MutableStateFlow(prefs.getBoolean("has_drawn_before", false))
+    /** True once the user has committed at least one stroke in any session. */
+    val hasDrawnBefore: StateFlow<Boolean> = _hasDrawnBefore.asStateFlow()
 
     private val _uiState = MutableStateFlow(DrawUiState())
     val uiState: StateFlow<DrawUiState> = _uiState.asStateFlow()
@@ -93,6 +105,13 @@ class DrawViewModel @Inject constructor(
                         strokes = draft,
                         canSend = true
                     )
+                }
+            }
+            if (!_hasDrawnBefore.value) {
+                val sent = sketchRepository.getSentSketches().firstOrNull()
+                if (!sent.isNullOrEmpty()) {
+                    _hasDrawnBefore.value = true
+                    prefs.edit().putBoolean("has_drawn_before", true).apply()
                 }
             }
         }
@@ -248,6 +267,8 @@ class DrawViewModel @Inject constructor(
                             sentToNames = names,
                         )
                     }
+                    _hasDrawnBefore.value = true
+                    prefs.edit().putBoolean("has_drawn_before", true).apply()
                     onSent()
                 },
                 onFailure = { err ->

@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.jrprofessor.sketchly.ui.components.SketchlyTopBar
 import com.jrprofessor.sketchly.ui.theme.AppNameColor
 import com.jrprofessor.sketchly.ui.theme.BgColor
 import com.jrprofessor.sketchly.ui.theme.ButtonGold
@@ -126,39 +127,14 @@ private fun ProfileScreenContent(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(BgColor)
-            .statusBarsPadding(),
+            .background(BgColor),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        // ── Top Bar ───────────────────────────────────────────────────────────
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 8.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            // Back button
-            IconButton(
-                onClick = onBack,
-                modifier = Modifier.align(Alignment.CenterStart),
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = "Back",
-                    tint = AppNameColor,
-                )
-            }
-
-            Text(
-                text = "Profile",
-                style = MaterialTheme.typography.titleLarge.copy(
-                    fontWeight = FontWeight.Bold,
-                    fontStyle = FontStyle.Italic,
-                    fontSize = 22.sp,
-                ),
-                color = AppNameColor,
-            )
-        }
+        // ── Top Bar ──────────────────────────────────────────────────────
+        SketchlyTopBar(
+            title  = "Profile",
+            onBack = onBack,
+        )
 
         Spacer(modifier = Modifier.height(32.dp))
 

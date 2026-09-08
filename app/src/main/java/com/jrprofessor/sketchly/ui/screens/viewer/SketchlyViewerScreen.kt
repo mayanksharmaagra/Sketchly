@@ -12,6 +12,7 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,7 +28,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -42,8 +43,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -67,10 +66,12 @@ import com.jrprofessor.sketchly.data.model.Stroke
 import com.jrprofessor.sketchly.data.model.hexToColor
 import com.jrprofessor.sketchly.data.repository.AuthRepository
 import com.jrprofessor.sketchly.data.repository.SketchlyRepository
+import com.jrprofessor.sketchly.ui.components.SketchlyTopBar
 import com.jrprofessor.sketchly.ui.components.ViewerSkeleton
+import com.jrprofessor.sketchly.ui.theme.AppNameColor
+import com.jrprofessor.sketchly.ui.theme.BgColor
 import com.jrprofessor.sketchly.ui.theme.CanvasCardShape
 import com.jrprofessor.sketchly.ui.theme.PaperIvory
-import com.jrprofessor.sketchly.ui.theme.PillShape
 import com.jrprofessor.sketchly.ui.theme.SketchlyTheme
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
@@ -84,7 +85,7 @@ import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
 
-val EMOJI_REACTIONS = listOf("❤️", "😂", "👏", "🔥", "😮", "✨")
+val EMOJI_REACTIONS = listOf("❤️", "😂", "✨", "😮", "😢")
 
 data class ViewerUiState(
     val sketch: Sketch? = null,
@@ -192,166 +193,117 @@ fun ViewerScreenContent(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding()
-            .padding(16.dp),
+            .background(BgColor),
     ) {
-        // ── Top Bar ──
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // Back button with TalkBack label (UIUX §9)
-            IconButton(
-                onClick = onBack,
-                modifier = Modifier.semantics { contentDescription = "Back" },
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = "Back",
-                    tint = MaterialTheme.colorScheme.onSurface,
-                )
+        // ── Top Bar ──────────────────────────────────────────────────────────
+        val displayName = when {
+            isSender -> {
+                uiState.sketch?.recipientIds?.firstOrNull() ?: "Unknown"
             }
-
-            Column(modifier = Modifier.padding(start = 8.dp)) {
-                val senderName = uiState.sketch?.senderDisplayName?.takeIf { it.isNotBlank() }
-                Text(
-                    text = if (senderName != null) "from $senderName" else "Sketch Note",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.Bold,
-                )
-                val createdAt = uiState.sketch?.createdAt ?: System.currentTimeMillis()
-                val dateStr = SimpleDateFormat("MMM d, yyyy · h:mm a", Locale.getDefault()).format(Date(createdAt))
-                Text(
-                    text = dateStr,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            else -> {
+                uiState.sketch?.senderDisplayName?.takeIf { it.isNotBlank() } ?: "Unknown"
             }
         }
+        val createdAt = uiState.sketch?.createdAt ?: System.currentTimeMillis()
+        val timeStr = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(createdAt))
 
-        // ── Full Canvas Card ──
+        SketchlyTopBar(
+            title     = displayName,
+            subtitle  = "Sent at $timeStr",
+            onBack    = onBack,
+            isItalic  = false,
+            rightSlot = {
+                IconButton(
+                    onClick  = { /* TODO: share / delete options */ },
+                ) {
+                    Icon(
+                        imageVector        = Icons.Outlined.MoreVert,
+                        contentDescription = "More options",
+                        tint               = AppNameColor,
+                    )
+                }
+            },
+        )
+
+        // ── Full Canvas Card ──────────────────────────────────────────────────
         Surface(
-            shape = CanvasCardShape,
-            color = PaperIvory,
+            shape           = CanvasCardShape,
+            color           = PaperIvory,
             shadowElevation = 6.dp,
-            modifier = Modifier
+            modifier        = Modifier
                 .weight(1f)
-                .fillMaxWidth(),
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 8.dp),
         ) {
             if (uiState.isLoading) {
                 Box(
                     contentAlignment = Alignment.Center,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier         = Modifier.fillMaxSize(),
                 ) {
-                    // Paper-texture skeleton (UIUX §7) replaces generic spinner
                     ViewerSkeleton()
                 }
             } else {
                 val allStrokes = uiState.sketch?.strokes ?: emptyList()
                 StrokeReplayCanvas(
-                    allStrokes = allStrokes,
+                    allStrokes    = allStrokes,
                     replayStarted = uiState.replayStarted,
-                    density = density.density,
+                    density       = density.density,
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
-        // ── Reactions received summary (shown to sender only, SRS FR-7.3) ──
-        val reactions = uiState.reactions
-        if (isSender && reactions.isNotEmpty()) {
-            val grouped = reactions.groupBy { it.emoji }
-            Surface(
-                shape = PillShape,
-                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 8.dp),
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "Reactions: ",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    grouped.forEach { (emoji, list) ->
-                        Text(
-                            text = "$emoji ${list.size}",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        )
-                    }
-                }
-            }
-        }
-
-        // ── Emoji Reaction Bar (SRS FR-7) ──
-        Surface(
-            shape = PillShape,
-            color = PaperIvory,
-            shadowElevation = 3.dp,
-            modifier = Modifier.fillMaxWidth(),
+        // ── Emoji Reaction Bar (Image 2 style — 5 circular pill buttons) ──────
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 28.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment     = Alignment.CenterVertically,
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                EMOJI_REACTIONS.forEach { emoji ->
-                    val isSelected = uiState.selectedEmoji == emoji
-                    // Bounce scale animation on selection (UIUX §12)
-                    val scale by animateFloatAsState(
-                        targetValue = if (isSelected) 1.35f else 1f,
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioMediumBouncy,
-                            stiffness = Spring.StiffnessMedium,
-                        ),
-                        label = "emoji_scale_$emoji",
-                    )
-                    // 48dp touch target (UIUX §9 — minimum interactive component size)
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .scale(scale)
-                            .clip(CircleShape)
-                            .background(
-                                if (isSelected) MaterialTheme.colorScheme.primaryContainer
-                                else Color.Transparent,
-                            )
-                            .clickable(onClickLabel = "React with $emoji") { onReact(emoji) }
-                            .semantics { contentDescription = "React with $emoji" },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        // AnimatedContent for the emoji to pop in when selected (UIUX §12)
-                        AnimatedContent(
-                            targetState = isSelected,
-                            transitionSpec = {
-                                (fadeIn(tween(150)) + scaleIn(
-                                    spring(Spring.DampingRatioMediumBouncy),
-                                    initialScale = 0.7f,
-                                )) togetherWith (fadeOut(tween(100)) + scaleOut(tween(100)))
-                            },
-                            label = "emoji_anim_$emoji",
-                        ) { selected ->
-                            Text(
-                                text = emoji,
-                                fontSize = if (selected) 26.sp else 22.sp,
-                            )
-                        }
+            EMOJI_REACTIONS.forEach { emoji ->
+                val isSelected = uiState.selectedEmoji == emoji
+                val scale by animateFloatAsState(
+                    targetValue  = if (isSelected) 1.25f else 1f,
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness    = Spring.StiffnessMedium,
+                    ),
+                    label = "emoji_scale_$emoji",
+                )
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .background(
+                            color  = Color(0xFFF5EFE0),
+                            shape  = CircleShape,
+                        )
+                        .then(
+                            if (isSelected)
+                                Modifier.border(2.dp, Color(0xFFC99A3C), CircleShape)
+                            else
+                                Modifier
+                        )
+                        .clickable(onClickLabel = "React with $emoji") { onReact(emoji) }
+                        .semantics { contentDescription = "React with $emoji" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    AnimatedContent(
+                        targetState  = isSelected,
+                        transitionSpec = {
+                            (fadeIn(tween(150)) + scaleIn(
+                                spring(Spring.DampingRatioMediumBouncy),
+                                initialScale = 0.7f,
+                            )) togetherWith (fadeOut(tween(100)) + scaleOut(tween(100)))
+                        },
+                        label = "emoji_anim_$emoji",
+                    ) { selected ->
+                        Text(
+                            text     = emoji,
+                            fontSize = if (selected) 26.sp else 22.sp,
+                        )
                     }
                 }
             }

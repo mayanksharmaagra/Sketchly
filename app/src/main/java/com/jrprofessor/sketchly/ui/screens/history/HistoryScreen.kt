@@ -1,6 +1,8 @@
 package com.jrprofessor.sketchly.ui.screens.history
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -9,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -50,13 +53,13 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jrprofessor.sketchly.data.local.SenderInfo
 import com.jrprofessor.sketchly.data.model.Sketch
+import com.jrprofessor.sketchly.data.model.hexToColor
 import com.jrprofessor.sketchly.data.repository.HistoryFilter
 import com.jrprofessor.sketchly.ui.components.SketchlyThumbnail
-import com.jrprofessor.sketchly.ui.screens.archive.ArchiveViewModel
+import com.jrprofessor.sketchly.ui.components.TOP_BAR_HEIGHT
 import com.jrprofessor.sketchly.ui.theme.AppNameColor
 import com.jrprofessor.sketchly.ui.theme.BgColor
 import com.jrprofessor.sketchly.ui.theme.ButtonGold
-import com.jrprofessor.sketchly.ui.theme.NoteCardShape
 import com.jrprofessor.sketchly.ui.theme.PaperIvory
 import com.jrprofessor.sketchly.ui.theme.TextEditorBorderColor
 import com.jrprofessor.sketchly.ui.theme.TextMuted
@@ -71,7 +74,7 @@ import java.util.Locale
 
 /**
  * Full-screen History screen — date-grouped 2-column grid of all past Sketches.
- * Reuses [ArchiveViewModel] for pagination, filtering, and sender loading.
+ * Reuses [HistoryViewModel] for pagination, filtering, and sender loading.
  */
 @Composable
 fun HistoryScreen(
@@ -79,7 +82,7 @@ fun HistoryScreen(
     onProfileTap: () -> Unit = {},
     onSettingsTap: () -> Unit = {},
     onDrawTap: () -> Unit = {},
-    viewModel: ArchiveViewModel = hiltViewModel(),
+    viewModel: HistoryViewModel = hiltViewModel(),
 ) {
     val grouped by viewModel.groupedSketches.collectAsStateWithLifecycle()
     val filter by viewModel.filter.collectAsStateWithLifecycle()
@@ -129,8 +132,7 @@ private fun HistoryContent(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(BgColor)
-            .statusBarsPadding(),
+            .background(BgColor),
     ) {
         HistoryTopBar(onProfileTap = onProfileTap, onSettingsTap = onSettingsTap)
 
@@ -230,8 +232,9 @@ private fun HistoryTopBar(
         modifier = Modifier
             .fillMaxWidth()
             .background(ToolBarBgColor)
-            .padding(horizontal = 20.dp, vertical = 14.dp)
-        ,
+            .statusBarsPadding()
+            .height(TOP_BAR_HEIGHT)
+            .padding(horizontal = 20.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -354,40 +357,36 @@ private fun HistoryGridCard(
 ) {
     val senderLabel = sketch.senderDisplayName.takeIf { it.isNotBlank() } ?: "Unknown"
     val dateLabel = SimpleDateFormat("MMM d", Locale.getDefault()).format(Date(sketch.createdAt))
+    val cardBg = try {
+        hexToColor(sketch.backgroundColor)
+    } catch (_: Exception) {
+        PaperIvory
+    }
 
     Surface(
-        shape = NoteCardShape,
+        shape = RoundedCornerShape(22.dp),
         color = PaperIvory,
-        shadowElevation = 4.dp,
+        border = BorderStroke(3.dp, ToolBarBgColor),
+        shadowElevation = 3.dp,
         modifier = modifier
             .fillMaxWidth()
+            .aspectRatio(1f)
             .clickable(onClickLabel = "Open sketch from $senderLabel") { onClick() }
             .semantics { contentDescription = "Sketch from $senderLabel on $dateLabel" },
     ) {
-        Column(
-            modifier = Modifier.padding(10.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(8.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .border(0.8.dp, Color(0x40000000), RoundedCornerShape(16.dp))
+                .background(cardBg),
+            contentAlignment = Alignment.Center,
         ) {
             SketchlyThumbnail(
                 strokes = sketch.strokes,
-                size = 140.dp,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            if (senderLabel != "Unknown") {
-                Text(
-                    text = senderLabel,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = AppNameColor,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                )
-            }
-            Text(
-                text = dateLabel,
-                style = MaterialTheme.typography.labelSmall,
-                color = TextMuted,
-                fontWeight = FontWeight.Medium,
+                backgroundColor = cardBg,
+                modifier = Modifier.fillMaxSize(),
             )
         }
     }
@@ -540,6 +539,7 @@ private fun fakeSenders() = listOf(
 @androidx.compose.ui.tooling.preview.Preview(
     name = "History – Populated",
     showBackground = true,
+    showSystemUi = true,
     device = "spec:width=411dp,height=891dp",
 )
 @Composable

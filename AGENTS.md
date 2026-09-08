@@ -62,7 +62,8 @@ Sketchly/
 │   │   │   │   ├── PenToolbar.kt
 │   │   │   │   ├── RecipientPickerSheet.kt
 │   │   │   │   ├── SkeletonLoader.kt
-│   │   │   │   └── SketchlyThumbnail.kt
+│   │   │   │   ├── SketchlyThumbnail.kt
+│   │   │   │   └── SketchlyTopBar.kt
 │   │   │   ├── navigation/
 │   │   │   │   ├── Screen.kt              # Route definitions
 │   │   │   │   ├── SketchlyBottomBar.kt
@@ -76,32 +77,31 @@ Sketchly/
 │   │   │   │   ├── contacts/
 │   │   │   │   │   └── ContactPermissionScreen.kt  # READ_CONTACTS gate + hash sync
 │   │   │   │   ├── dashboard/
-│   │   │   │   │   └── DashboardScreen.kt      # Main home — greeting, RECENT ACTIVITY inbox feed, Draw FAB (no history tab)
+│   │   │   │   │   ├── DashboardScreen.kt      # Main home — greeting, RECENT ACTIVITY feed, Draw FAB
+│   │   │   │   │   └── DashboardViewModel.kt   # exposes recentSketches, currentUserId
 │   │   │   │   ├── draw/
 │   │   │   │   │   ├── DrawScreen.kt           # Full-screen canvas (no bottom bar)
 │   │   │   │   │   └── DrawViewModel.kt
-│   │   │   │   ├── inbox/
-│   │   │   │   │   ├── InboxScreen.kt          # Standalone inbox (accessible via Circle/Settings)
-│   │   │   │   │   └── InboxViewModel.kt
 │   │   │   │   ├── circle/
-│   │   │   │   │   ├── CircleScreen.kt         # Redesigned — search + colorful avatars + Add Friend sheet
+│   │   │   │   │   ├── CircleScreen.kt         # Search + colorful avatars
 │   │   │   │   │   └── CircleViewModel.kt
 │   │   │   │   ├── send/
 │   │   │   │   │   └── SendToScreen.kt         # Full-screen recipient picker + SentConfirmationDialog
 │   │   │   │   ├── widget/
 │   │   │   │   │   └── AddWidgetScreen.kt      # Home screen widget promo
 │   │   │   │   ├── profile/
-│   │   │   │   │   └── ProfileScreen.kt        # Initials avatar, stats, Open Settings button
+│   │   │   │   │   ├── ProfileScreen.kt        # Initials avatar, stats, Open Settings button
+│   │   │   │   │   ├── EditProfileScreen.kt    # Edit display name + avatar upload
+│   │   │   │   │   └── EditProfileViewModel.kt
 │   │   │   │   ├── viewer/
-│   │   │   │   │   └── SketchlyViewerScreen.kt
+│   │   │   │   │   ├── SketchlyViewerScreen.kt          # Redesigned: name/time header, canvas card, 5-emoji bar
+│   │   │   │   │   ├── ContactHistoryScreen.kt          # [NEW] Hero header, 2-col week-grouped scribble grid
+│   │   │   │   │   └── ContactHistoryViewModel.kt       # [NEW] Loads sketches for a contact, groups by week
 │   │   │   │   ├── history/
-│   │   │   │   │   └── HistoryScreen.kt        # [NEW] Full-screen History — date-grouped 2-col grid, filter chips, reuses ArchiveViewModel
-│   │   │   │   ├── archive/
-│   │   │   │   │   └── ArchiveScreen.kt        # Legacy archive (kept for deep-link compat; ArchiveViewModel shared with HistoryScreen)
+│   │   │   │   │   ├── HistoryScreen.kt        # Full-screen History — date-grouped 2-col grid, filter chips
+│   │   │   │   │   └── HistoryViewmodel.kt     # Pagination, HistoryFilter, sender list
 │   │   │   │   ├── settings/
-│   │   │   │   │   └── SettingsScreen.kt       # Redesigned — WIDGET / NOTIFICATIONS / ACCOUNT sections
-│   │   │   │   ├── preview/
-│   │   │   │   │   └── ScreenPreviewScreen.kt
+│   │   │   │   │   └── SettingsScreen.kt       # WIDGET / NOTIFICATIONS / ACCOUNT sections
 │   │   │   │   └── started/
 │   │   │   │       └── StartedScreen.kt        # Onboarding / splash
 │   │   │   └── theme/
@@ -159,20 +159,24 @@ The system bottom nav bar is **allowlist-based** in `MainActivity`. The `Dashboa
 | `send_to` | SendToScreen | Hidden |
 | `add_widget` | AddWidgetScreen | Hidden |
 | `profile` | ProfileScreen | Hidden |
+| `edit_profile` | EditProfileScreen | Hidden |
 | `viewer` | SketchlyViewerScreen | Hidden |
+| `contact_history/{contactId}` | ContactHistoryScreen | Hidden |
 | `history` | HistoryScreen | Visible (History tab selected) |
-| `inbox` | InboxScreen | Visible |
 | `circle` | CircleScreen | Visible |
 | `settings` | SettingsScreen | Visible |
-| `archive` | ArchiveScreen | Visible |
-| `screen_preview` | ScreenPreviewScreen | Visible |
 
 ### DashboardScreen internals
 - **No tabs** — Dashboard always shows the Inbox (RECENT ACTIVITY) feed. The `DashTab` enum and `activeTab` state have been removed.
 - **Top bar icons**: Circle icon (→ `CircleScreen`) + initials avatar (→ `ProfileScreen`)
 - **Draw FAB**: gold pencil button floating above centre of bar → `DrawScreen`
-- **Data**: driven by `InboxViewModel` (sketches, unread count, online status) + `SettingsViewModel` (user display name / initials)
+- **Data**: driven by `DashboardViewModel` (recentSketches, currentUserId) + `SettingsViewModel` (user display name / initials)
 - **Greeting**: time-based — Good morning / afternoon / evening / night + first name
+- **onSketchTap callback** passes the full `Sketch` object — NavGraph decides whether to route to `SketchlyViewerScreen` (unread) or `ContactHistoryScreen` (already read).
+
+### Smart sketch-tap routing (NavGraph)
+- **Unread sketch** → `Screen.Viewer.createRoute(sketch.id)` — shows replay + marks as read.
+- **Already-read sketch** → `Screen.ContactHistory.createRoute(sketch.senderId)` — shows full history with that contact.
 
 ### HistoryScreen internals
 - **Route**: `Screen.History` (`"history"`) — navigated to by tapping the History tab in `SketchlyBottomBar`
@@ -186,6 +190,17 @@ The system bottom nav bar is **allowlist-based** in `MainActivity`. The `Dashboa
 ### SketchlyBottomBar API (updated)
 - Signature: `isHistorySelected: Boolean`, `onInboxTap: () -> Unit`, `onHistoryTap: () -> Unit`, `onDrawTap: () -> Unit`
 - `isHistorySelected` is derived in `MainActivity` from `currentRoute == Screen.History.route` — no separate state variable needed.
+
+### ContactHistoryScreen
+- **Route**: `Screen.ContactHistory` (`"contact_history/{contactId}"`) — navigated to from Dashboard when tapping an **already-read** sketch.
+- **Header**: large circular avatar (most recent sketch thumbnail), contact display name, scribble count + since-label.
+- **Body**: week-grouped 2-column grid (THIS WEEK / LAST WEEK / MMM YYYY), each card shows sketch thumbnail + day-of-week chip.
+- **ViewModel**: `ContactHistoryViewModel` — calls `SketchlyRepository.getSketchesWithContact(contactId)`.
+
+### SketchlyViewerScreen (redesigned)
+- **Top bar**: back arrow (left) · contact name centred · "Sent at HH:MM AM" subtitle · ⋮ more (right).
+- **Canvas**: large `PaperIvory` card with rounded corners, full sketch replay.
+- **Emoji bar**: 5 circular buttons (❤️ 😂 ✨ 😮 😢) with warm-sand background and gold ring on selected.
 
 ---
 
@@ -288,6 +303,8 @@ The system bottom nav bar is **allowlist-based** in `MainActivity`. The `Dashboa
 - **`AuthRepository` does NOT clear Room on sign-out in V1** — `db.clearAllTables()` is commented out. Since no local contact/sketch cache exists in V1, this is safe. Re-enable for V2 when Room cache is active.
 - **`firebase-storage` and `coil-compose` are now required dependencies** — added to `app/build.gradle.kts` and `gradle/libs.versions.toml`. `firebase-storage` is used by `EditProfileRepository` (avatar upload). `coil-compose` is used by `EditProfileScreen` (`AsyncImage`).
 - **`UserProfile` is defined inside `EditProfileRepository.kt`** — it lives in `com.jrprofessor.sketchly.data.repository` package at the bottom of the file. Do NOT import it from `data.model` — there is no `data.model.UserProfile` class.
+- **`SketchlyTopBar` is the uniform top bar for all screens with back navigation** — background is `ToolBarBgColor`, height is 56.dp, back button uses `AppNameColor`, title is centered. It calls `.background(ToolBarBgColor).statusBarsPadding().height(56.dp)` so status bar color matches the bar. Outer columns must NOT apply `statusBarsPadding()` to avoid double padding. `MainActivity` sets `SystemBarStyle.light()` for transparent status bar with dark icons.
+- **First scribble title in `DrawScreen`** — checks `DrawViewModel.hasDrawnBefore`. First time displays "Draw your first Scribble", subsequent times display "New Scribble". Mark occurs when sketch is sent or if sent sketches exist in Room.
 
 ---
 

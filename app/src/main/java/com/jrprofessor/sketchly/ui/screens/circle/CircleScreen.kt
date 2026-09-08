@@ -1,12 +1,6 @@
 package com.jrprofessor.sketchly.ui.screens.circle
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -104,7 +98,7 @@ private fun avatarColorFor(name: String): Color =
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-fun CircleScreen(
+fun FriendsListScreen(
     viewModel: CircleViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -297,7 +291,7 @@ private fun CircleHeader(contactCount: Int) {
             .padding(horizontal = 20.dp, vertical = 16.dp),
     ) {
         Text(
-            text = "Your Circle",
+            text = "Your Friend",
             style = MaterialTheme.typography.headlineLarge.copy(
                 fontWeight = FontWeight.Bold,
                 fontStyle = FontStyle.Italic,

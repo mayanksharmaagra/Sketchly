@@ -28,20 +28,14 @@ sealed class Screen(val route: String) {
     /** Dashboard — main home screen with recent activity, greeting, and bottom bar */
     data object Dashboard : Screen("dashboard")
 
-    /** Inbox — received Sketches feed */
-    data object Inbox : Screen("inbox")
-
     /** Draw — the core creation canvas */
     data object Draw : Screen("draw")
 
     /** Circle — contacts / friends list */
-    data object Circle : Screen("circle")
+    data object FriendsList : Screen("friendsList")
 
     /** Settings — app preferences */
     data object Settings : Screen("settings")
-
-    /** Archive — all past Sketches (legacy, kept for deep-link compat) */
-    data object Archive : Screen("archive")
 
     /** History — dedicated full-screen history route wired to bottom-nav History tab */
     data object History : Screen("history")
@@ -50,9 +44,6 @@ sealed class Screen(val route: String) {
     data object Viewer : Screen("viewer/{sketchId}") {
         fun createRoute(sketchId: String) = "viewer/$sketchId"
     }
-
-    /** Recipient Picker — bottom sheet to select recipients before sending */
-    data object RecipientPicker : Screen("recipient_picker")
 
     /** Send To — full-screen recipient picker */
     data object SendTo : Screen("send_to")
@@ -66,6 +57,8 @@ sealed class Screen(val route: String) {
     /** Edit Profile — edit display name and avatar */
     data object EditProfile : Screen("edit_profile")
 
-    /** Screen Preview — developer tool showing all app screens as thumbnails */
-    data object ScreenPreview : Screen("screen_preview")
+    /** Contact History — all scribbles exchanged with a specific contact */
+    data object ContactHistory : Screen("contact_history/{contactId}") {
+        fun createRoute(contactId: String) = "contact_history/$contactId"
+    }
 }

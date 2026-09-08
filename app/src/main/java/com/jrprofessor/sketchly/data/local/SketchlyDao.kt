@@ -69,6 +69,35 @@ interface SketchlyDao {
     /** Count of unread received sketches (for badge) */
     @Query("SELECT COUNT(*) FROM sketches WHERE isRead = 0 AND isSent = 0 AND isDraft = 0")
     fun getUnreadCount(): Flow<Int>
+
+    /**
+     * All sketches exchanged with a specific contact — both received from them
+     * (isSent = 0, senderId matches) and sent to them (isSent = 1,
+     * recipientIds JSON contains their uid). Newest first.
+     */
+    @Query("""
+        SELECT * FROM sketches
+        WHERE isDraft = 0
+          AND (
+            (isSent = 0 AND senderId = :contactId)
+            OR
+            (isSent = 1 AND recipientIds LIKE '%' || :contactId || '%')
+          )
+        ORDER BY createdAt DESC
+    """)
+    fun getSketchesWithContact(contactId: String): Flow<List<SketchlyEntity>>
+
+    /** Total count of sketches exchanged with a contact (for header stat) */
+    @Query("""
+        SELECT COUNT(*) FROM sketches
+        WHERE isDraft = 0
+          AND (
+            (isSent = 0 AND senderId = :contactId)
+            OR
+            (isSent = 1 AND recipientIds LIKE '%' || :contactId || '%')
+          )
+    """)
+    suspend fun getContactSketchCount(contactId: String): Int
 }
 
 /** Lightweight projection for building the contact filter chip list */

@@ -9,19 +9,17 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
-import com.jrprofessor.sketchly.ui.screens.archive.ArchiveScreen
 import com.jrprofessor.sketchly.ui.screens.auth.AuthScreen
 import com.jrprofessor.sketchly.ui.screens.auth.ProfileSetupScreen
-import com.jrprofessor.sketchly.ui.screens.circle.CircleScreen
+import com.jrprofessor.sketchly.ui.screens.circle.FriendsListScreen
 import com.jrprofessor.sketchly.ui.screens.dashboard.DashboardScreen
 import com.jrprofessor.sketchly.ui.screens.draw.DrawScreen
 import com.jrprofessor.sketchly.ui.screens.draw.DrawViewModel
-import com.jrprofessor.sketchly.ui.screens.inbox.InboxScreen
 import com.jrprofessor.sketchly.ui.screens.profile.ProfileScreen
 import com.jrprofessor.sketchly.ui.screens.send.SendToScreen
 import com.jrprofessor.sketchly.ui.screens.settings.SettingsScreen
+import com.jrprofessor.sketchly.ui.screens.viewer.ContactHistoryScreen
 import com.jrprofessor.sketchly.ui.screens.viewer.SketchlyViewerScreen
-import com.jrprofessor.sketchly.ui.screens.preview.ScreenPreviewScreen
 import com.jrprofessor.sketchly.ui.screens.contacts.ContactPermissionScreen
 import com.jrprofessor.sketchly.ui.screens.started.StartedScreen
 import com.jrprofessor.sketchly.ui.screens.widget.AddWidgetScreen
@@ -94,21 +92,20 @@ fun SketchlyNavGraph(
 
         composable(Screen.Dashboard.route) {
             DashboardScreen(
-                onSketchTap  = { sketchId ->
-                    navController.navigate(Screen.Viewer.createRoute(sketchId))
+                onSketchTap = { sketch ->
+                    // Unread → open the viewer (marks as read + shows replay)
+                    // Already read → open contact history for that person
+                    if (!sketch.isRead) {
+                        navController.navigate(Screen.Viewer.createRoute(sketch.id))
+                    } else {
+                        navController.navigate(
+                            Screen.ContactHistory.createRoute(sketch.senderId)
+                        )
+                    }
                 },
                 onDrawTap    = { navController.navigate(Screen.Draw.route) },
-                onCircleTap  = { navController.navigate(Screen.Circle.route) },
+                onCircleTap  = { navController.navigate(Screen.FriendsList.route) },
                 onProfileTap = { navController.navigate(Screen.Profile.route) },
-            )
-        }
-
-        composable(Screen.Inbox.route) {
-            InboxScreen(
-                onSketchTap = { sketchId ->
-                    navController.navigate(Screen.Viewer.createRoute(sketchId))
-                },
-                onDrawTap = { navController.navigate(Screen.Draw.route) },
             )
         }
 
@@ -166,16 +163,13 @@ fun SketchlyNavGraph(
             )
         }
 
-        composable(Screen.Circle.route) {
-            CircleScreen()
+        composable(Screen.FriendsList.route) {
+            FriendsListScreen()
         }
 
         composable(Screen.Settings.route) {
             SettingsScreen(
                 onBack = { navController.popBackStack() },
-                onNavigateToCircle = {
-                    navController.navigate(Screen.Circle.route)
-                },
                 onSignedOut = {
                     navController.navigate(Screen.Auth.route) {
                         popUpTo(0) { inclusive = true }
@@ -183,10 +177,7 @@ fun SketchlyNavGraph(
                 },
                 onNavigateToEditProfile = {
                     navController.navigate(Screen.EditProfile.route)
-                },
-                onNavigateToScreenPreview = {
-                    navController.navigate(Screen.ScreenPreview.route)
-                },
+                }
             )
         }
 
@@ -207,14 +198,6 @@ fun SketchlyNavGraph(
         composable(Screen.EditProfile.route) {
             EditProfileScreen(
                 onBack = { navController.popBackStack() },
-            )
-        }
-
-        composable(Screen.Archive.route) {
-            ArchiveScreen(
-                onSketchTap = { sketchId ->
-                    navController.navigate(Screen.Viewer.createRoute(sketchId))
-                },
             )
         }
 
@@ -245,10 +228,19 @@ fun SketchlyNavGraph(
             )
         }
 
-        composable(Screen.ScreenPreview.route) {
-            ScreenPreviewScreen(
-                onNavigateTo = { route -> navController.navigate(route) },
+        composable(
+            route = Screen.ContactHistory.route,
+            arguments = listOf(
+                navArgument("contactId") { type = NavType.StringType },
+            ),
+        ) { backStackEntry ->
+            val contactId = backStackEntry.arguments?.getString("contactId").orEmpty()
+            ContactHistoryScreen(
+                contactId = contactId,
                 onBack = { navController.popBackStack() },
+                onSketchTap = { sketchId ->
+                    navController.navigate(Screen.Viewer.createRoute(sketchId))
+                },
             )
         }
     }

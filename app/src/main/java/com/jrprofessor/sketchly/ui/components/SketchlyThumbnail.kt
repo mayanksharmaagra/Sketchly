@@ -15,7 +15,6 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke as DrawStroke
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
 import com.jrprofessor.sketchly.data.model.Stroke
 import com.jrprofessor.sketchly.data.model.hexToColor
 import com.jrprofessor.sketchly.ui.theme.NoteCardShape
@@ -28,14 +27,15 @@ import com.jrprofessor.sketchly.ui.theme.PaperIvory
 fun SketchlyThumbnail(
     strokes: List<Stroke>,
     modifier: Modifier = Modifier,
-    size: Dp = 64.dp,
+    size: Dp = Dp.Unspecified,
     backgroundColor: Color = PaperIvory,
 ) {
     val density = LocalDensity.current
 
+    val finalModifier = if (size != Dp.Unspecified) modifier.size(size) else modifier
+
     Box(
-        modifier = modifier
-            .size(size)
+        modifier = finalModifier
             .clip(NoteCardShape)
             .background(backgroundColor),
     ) {
