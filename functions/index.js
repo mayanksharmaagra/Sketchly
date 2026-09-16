@@ -21,6 +21,20 @@ const createTransporter = () => nodemailer.createTransport({
 
 initializeApp();
 
+// ── Feature Flags ─────────────────────────────────────────────────────────────
+//
+// Mirror of FeatureFlags.kt on the Android client.
+// Keep both flags in sync when enabling / disabling a feature.
+//
+// ENABLE_CONNECTION_REQUESTS
+//   Controls the follow-request / accept-decline connection flow.
+//   When false: onFollowRequestCreate and onFollowRequestAccept are no-ops
+//   (functions still deploy so existing Firestore triggers don't error out,
+//   but they return early without doing any work).
+//   Set to true to restore the full flow in a future release.
+// ──────────────────────────────────────────────────────────────────────────────
+const ENABLE_CONNECTION_REQUESTS = false;
+
 /**
  * onScribbleCreate — FCM fan-out (Architecture §7)
  *
@@ -95,6 +109,203 @@ exports.onScribbleCreate = onDocumentCreated(
 
     await Promise.allSettled(sendPromises);
     console.log(`onScribbleCreate: fan-out complete for scribble ${scribbleId}`);
+
+    // ── Connection / Auto-connect ──────────────────────────────────────────────
+    //
+    // Branching on ENABLE_CONNECTION_REQUESTS (FeatureFlags.kt mirror):
+    //
+    //   true  → existing request-based flow (pending → accept/decline dialog).
+    //            All request logic is preserved verbatim inside this branch.
+    //
+    //   false → V1 auto-connect path: first scribble send instantly creates a
+    //            symmetric connection entry without any pending state.
+    //            Scribble proceeds straight to the recipient's Inbox.
+    //
+    // Guard applied to BOTH paths:
+    //   - isBlocked: if the recipient has blocked the sender (or vice-versa),
+    //     skip this recipient silently.
+    //   - Self-send: recipientId == senderId → skip.
+    // ──────────────────────────────────────────────────────────────────────────
+    if (!senderId) {
+      console.warn("onScribbleCreate: senderId missing — skipping connection logic.");
+      return;
+    }
+
+    // Fetch sender's public profile once (shared across all recipients in both paths)
+    let senderProfile = {displayName: "Sketchly User", username: "", avatarUrl: null};
+    try {
+      const senderDoc = await db.collection("users").doc(senderId).get();
+      if (senderDoc.exists) {
+        const d = senderDoc.data();
+        senderProfile = {
+          displayName: d.displayName || "Sketchly User",
+          username: d.username || "",
+          avatarUrl: d.avatarUrl || null,
+        };
+      }
+    } catch (err) {
+      console.error("onScribbleCreate: failed to fetch sender profile:", err);
+    }
+
+    const connectionPromises = recipientIds
+      .filter((recipientId) => recipientId !== senderId) // self-send guard
+      .map(async (recipientId) => {
+        try {
+          // ── Block check (applied to both flag paths) ──────────────────────
+          // A `blocks` sub-collection entry means this recipient has blocked
+          // the sender (or the sender has blocked this recipient).
+          // Either direction → skip silently, do NOT deliver the scribble.
+          const [blockedByRecipient, blockedBySender] = await Promise.all([
+            db.collection("blocks").doc(recipientId).collection("entries").doc(senderId).get(),
+            db.collection("blocks").doc(senderId).collection("entries").doc(recipientId).get(),
+          ]);
+          if (blockedByRecipient.exists || blockedBySender.exists) {
+            console.log(
+              `onScribbleCreate: block detected between ${senderId} ↔ ${recipientId} — skipping silently.`,
+            );
+            return;
+          }
+
+          if (ENABLE_CONNECTION_REQUESTS) {
+            // ── [FEATURE FLAGGED — V2] Request-based connection flow ──────────
+            // This block is preserved in full and untouched.
+            // Re-enable by setting ENABLE_CONNECTION_REQUESTS = true.
+            // ─────────────────────────────────────────────────────────────────
+
+            // 1. Already connected check (O(1) sub-collection lookup)
+            const connectedDoc = await db
+              .collection("connections")
+              .doc(senderId)
+              .collection("entries")
+              .doc(recipientId)
+              .get();
+            if (connectedDoc.exists) {
+              console.log(
+                `onScribbleCreate: ${senderId} ↔ ${recipientId} already connected — skipping request.`,
+              );
+              return;
+            }
+
+            // 2. Duplicate PENDING check (both directions)
+            const [pendingA, pendingB] = await Promise.all([
+              db.collection("connectionRequests")
+                .where("fromUserId", "==", senderId)
+                .where("toUserId", "==", recipientId)
+                .where("status", "==", "pending")
+                .limit(1)
+                .get(),
+              db.collection("connectionRequests")
+                .where("fromUserId", "==", recipientId)
+                .where("toUserId", "==", senderId)
+                .where("status", "==", "pending")
+                .limit(1)
+                .get(),
+            ]);
+            if (!pendingA.empty || !pendingB.empty) {
+              console.log(
+                `onScribbleCreate: pending request already exists between ${senderId} and ${recipientId} — skipping.`,
+              );
+              return;
+            }
+
+            // 3. 24 h cooldown after decline
+            const declinedSnap = await db.collection("connectionRequests")
+              .where("fromUserId", "==", senderId)
+              .where("toUserId", "==", recipientId)
+              .where("status", "==", "declined")
+              .orderBy("lastDeclinedAt", "desc")
+              .limit(1)
+              .get();
+            if (!declinedSnap.empty) {
+              const lastDeclined = declinedSnap.docs[0].data().lastDeclinedAt;
+              if (lastDeclined && (Date.now() - lastDeclined.toMillis()) < 24 * 60 * 60 * 1000) {
+                console.log(
+                  `onScribbleCreate: ${senderId}→${recipientId} declined within 24 h — cooldown active.`,
+                );
+                return;
+              }
+            }
+
+            // 4. Create the connection request
+            const requestId = `${senderId}_${recipientId}`;
+            await db.collection("connectionRequests").doc(requestId).set({
+              id: requestId,
+              fromUserId: senderId,
+              toUserId: recipientId,
+              scribbleId: scribbleId,
+              status: "pending",
+              fromDisplayName: senderProfile.displayName,
+              fromAvatarUrl: senderProfile.avatarUrl,
+              fromUsername: senderProfile.username,
+              createdAt: Timestamp.now(),
+              lastDeclinedAt: null,
+            });
+            console.log(
+              `onScribbleCreate: connectionRequest created ${requestId} for scribble ${scribbleId}`,
+            );
+
+          } else {
+            // ── [V1 AUTO-CONNECT PATH] ─────────────────────────────────────
+            // No pending state. First scribble from sender → recipient
+            // immediately creates a symmetric connection entry so future
+            // scribbles go straight to the Inbox without any dialog.
+            // ──────────────────────────────────────────────────────────────
+
+            // Already connected check — idempotent upsert guard
+            const connectedDoc = await db
+              .collection("connections")
+              .doc(senderId)
+              .collection("entries")
+              .doc(recipientId)
+              .get();
+            if (connectedDoc.exists) {
+              console.log(
+                `onScribbleCreate [auto-connect]: ${senderId} ↔ ${recipientId} already connected — nothing to do.`,
+              );
+              return;
+            }
+
+            // Write symmetric connection entries atomically
+            const now = Timestamp.now();
+            const batch = db.batch();
+
+            // connections/{senderId}/entries/{recipientId}
+            batch.set(
+              db.collection("connections").doc(senderId).collection("entries").doc(recipientId),
+              {
+                userId: recipientId,
+                connectedAt: now,
+                initiatedByScribbleId: scribbleId,
+              },
+            );
+
+            // connections/{recipientId}/entries/{senderId}
+            batch.set(
+              db.collection("connections").doc(recipientId).collection("entries").doc(senderId),
+              {
+                userId: senderId,
+                connectedAt: now,
+                initiatedByScribbleId: scribbleId,
+              },
+            );
+
+            await batch.commit();
+            console.log(
+              `onScribbleCreate [auto-connect]: symmetric connection created ${senderId} ↔ ${recipientId} for scribble ${scribbleId}`,
+            );
+          }
+        } catch (err) {
+          console.error(
+            `onScribbleCreate: failed to process connection for ${recipientId}:`,
+            err,
+          );
+        }
+      });
+
+    await Promise.allSettled(connectionPromises);
+    console.log(
+      `onScribbleCreate: connection processing complete for scribble ${scribbleId}`,
+    );
   },
 );
 
@@ -495,101 +706,102 @@ exports.matchContactsByHash = onCall(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// onFollowRequestCreate — notify the target user of a new follow request
+// onConnectionRequestCreate — notify recipient of a new connection request
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Triggered when a new document is created in `followRequests/{requestId}`.
+ * Triggered when a new document is created in `connectionRequests/{requestId}`.
  *
  * Expected doc shape:
- *   { fromUserId, toUserId, fromUserName, status: "pending", createdAt }
+ *   { fromUserId, toUserId, fromDisplayName, scribbleId, status: "pending", createdAt }
  *
  * Flow:
- *   1. Read fromUserId, toUserId, fromUserName from the new doc.
+ *   1. Read fromUserId, toUserId, fromDisplayName from the new doc.
  *   2. Fetch toUser's fcmToken from users/{toUserId}.
- *   3. Send a visible FCM notification to the target user.
+ *   3. Send a visible FCM notification to the recipient with type "connection_request".
  */
-exports.onFollowRequestCreate = onDocumentCreated(
+exports.onConnectionRequestCreate = onDocumentCreated(
   {
-    document: "followRequests/{requestId}",
+    document: "connectionRequests/{requestId}",
     region: "us-central1",
   },
   async (event) => {
-    const request = event.data?.data();
-    if (!request) {
-      console.warn("onFollowRequestCreate: no data in snapshot, skipping.");
+    const req = event.data?.data();
+    if (!req) {
+      console.warn("onConnectionRequestCreate: no data in snapshot, skipping.");
       return;
     }
 
-    const {fromUserId, toUserId, fromUserName} = request;
+    const {fromUserId, toUserId, fromDisplayName, scribbleId} = req;
 
     if (!fromUserId || !toUserId) {
-      console.warn("onFollowRequestCreate: missing fromUserId or toUserId, skipping.");
+      console.warn("onConnectionRequestCreate: missing fromUserId or toUserId, skipping.");
       return;
     }
 
     const db = getFirestore();
     const messaging = getMessaging();
 
-    // Fetch the target user's FCM token
+    // Fetch the recipient's FCM token
     let fcmToken;
     try {
       const toUserDoc = await db.collection("users").doc(toUserId).get();
       fcmToken = toUserDoc.data()?.fcmToken;
     } catch (err) {
-      console.error("onFollowRequestCreate: failed to fetch target FCM token:", err);
+      console.error("onConnectionRequestCreate: failed to fetch target FCM token:", err);
       return;
     }
 
     if (!fcmToken) {
-      console.log(`onFollowRequestCreate: no FCM token for user ${toUserId}, skipping.`);
+      console.log(`onConnectionRequestCreate: no FCM token for user ${toUserId}, skipping.`);
       return;
     }
 
     try {
-      const senderName = fromUserName || "Someone";
+      const senderName = fromDisplayName || "Someone";
       await messaging.send({
         token: fcmToken,
         notification: {
-          title: "New follow request",
-          body: `${senderName} wants to follow you on Sketchly`,
+          title: "New connection request",
+          body: `${senderName} wants to connect and sent you a Scribble`,
         },
         data: {
-          type: "follow_request",
+          type: "connection_request",
           fromUserId,
+          scribbleId: scribbleId || "",
           requestId: event.params.requestId,
         },
         android: {
           priority: "high",
           notification: {
-            channelId: "social", // Client must create this notification channel
+            channelId: "social",
           },
         },
       });
-      console.log(`onFollowRequestCreate: notification sent to ${toUserId}`);
+      console.log(`onConnectionRequestCreate: notification sent to ${toUserId}`);
     } catch (err) {
-      console.error("onFollowRequestCreate: failed to send FCM:", err);
+      console.error("onConnectionRequestCreate: failed to send FCM:", err);
     }
   },
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// onFollowRequestAccept — create connection docs for both users + notify sender
+// onConnectionRequestAccept — create symmetric connection entries + notify sender
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Triggered on any write to `followRequests/{requestId}`.
+ * Triggered on any write to `connectionRequests/{requestId}`.
  * Only acts when `status` transitions to "accepted".
  *
  * Flow:
- *   1. Confirm status changed from non-accepted → "accepted".
- *   2. Create `connections/{fromUserId}_{toUserId}` and the reverse doc.
- *   3. Send FCM notification to fromUserId (request sender) to let them know
- *      their request was accepted.
+ *   1. Confirm status changed to "accepted".
+ *   2. Create connections/{fromUserId}/entries/{toUserId} and the reverse
+ *      (symmetric sub-collection structure — O(1) lookup from either side).
+ *   3. Send FCM notification to fromUserId (original sender) — "connected!".
  */
-exports.onFollowRequestAccept = onDocumentWritten(
+exports.onConnectionRequestAccept = onDocumentWritten(
   {
-    document: "followRequests/{requestId}",
+    document: "connectionRequests/{requestId}",
     region: "us-central1",
   },
   async (event) => {
@@ -603,7 +815,7 @@ exports.onFollowRequestAccept = onDocumentWritten(
     const {fromUserId, toUserId} = after;
 
     if (!fromUserId || !toUserId) {
-      console.warn("onFollowRequestAccept: missing user IDs, skipping.");
+      console.warn("onConnectionRequestAccept: missing user IDs, skipping.");
       return;
     }
 
@@ -611,11 +823,7 @@ exports.onFollowRequestAccept = onDocumentWritten(
     const messaging = getMessaging();
     const now = FieldValue.serverTimestamp();
 
-    // ── Create bidirectional connection docs ──────────────────────
-    const connectionId = `${fromUserId}_${toUserId}`;
-    const reverseId = `${toUserId}_${fromUserId}`;
-    const connectionsRef = db.collection("connections");
-
+    // ── Create symmetric sub-collection entries ───────────────────
     try {
       const [fromDoc, toDoc] = await Promise.all([
         db.collection("users").doc(fromUserId).get(),
@@ -625,60 +833,65 @@ exports.onFollowRequestAccept = onDocumentWritten(
       const toData = toDoc.exists ? toDoc.data() : {};
 
       const batch = db.batch();
-      batch.set(connectionsRef.doc(connectionId), {
-        userAId: fromUserId,
-        userBId: toUserId,
-        userId: toUserId,
-        displayName: toData.displayName || "Sketchly User",
-        username: toData.username || "",
-        avatarUrl: toData.avatarUrl || null,
-        source: "FOLLOW_REQUEST",
-        connectionStatus: "CONNECTED",
-        createdAt: now,
-      });
-      batch.set(connectionsRef.doc(reverseId), {
-        userAId: toUserId,
-        userBId: fromUserId,
-        userId: fromUserId,
-        displayName: fromData.displayName || "Sketchly User",
-        username: fromData.username || "",
-        avatarUrl: fromData.avatarUrl || null,
-        source: "FOLLOW_REQUEST",
-        connectionStatus: "CONNECTED",
-        createdAt: now,
-      });
+      // Entry visible to fromUser: the person they connected with is toUser
+      batch.set(
+        db.collection("connections").doc(fromUserId).collection("entries").doc(toUserId),
+        {
+          connectedUserId: toUserId,
+          displayName: toData.displayName || "Sketchly User",
+          username: toData.username || "",
+          avatarUrl: toData.avatarUrl || null,
+          source: "CONNECTION_REQUEST",
+          connectionStatus: "CONNECTED",
+          connectedAt: now,
+        },
+      );
+      // Entry visible to toUser: the person they connected with is fromUser
+      batch.set(
+        db.collection("connections").doc(toUserId).collection("entries").doc(fromUserId),
+        {
+          connectedUserId: fromUserId,
+          displayName: fromData.displayName || "Sketchly User",
+          username: fromData.username || "",
+          avatarUrl: fromData.avatarUrl || null,
+          source: "CONNECTION_REQUEST",
+          connectionStatus: "CONNECTED",
+          connectedAt: now,
+        },
+      );
       await batch.commit();
-      console.log(`onFollowRequestAccept: connections created for ${fromUserId} ↔ ${toUserId}`);
+      console.log(`onConnectionRequestAccept: connections created for ${fromUserId} ↔ ${toUserId}`);
     } catch (err) {
-      console.error("onFollowRequestAccept: failed to create connection docs:", err);
-      // Continue to send notification even if Firestore write partially failed
+      console.error("onConnectionRequestAccept: failed to create connection entries:", err);
     }
 
-    // ── Notify the requester that their follow was accepted ───────
+    // ── Notify the original sender that their request was accepted ─
     let fcmToken;
     try {
       const fromUserDoc = await db.collection("users").doc(fromUserId).get();
       fcmToken = fromUserDoc.data()?.fcmToken;
     } catch (err) {
-      console.error("onFollowRequestAccept: failed to fetch requester FCM token:", err);
+      console.error("onConnectionRequestAccept: failed to fetch sender FCM token:", err);
       return;
     }
 
     if (!fcmToken) {
-      console.log(`onFollowRequestAccept: no FCM token for ${fromUserId}, skipping notification.`);
+      console.log(`onConnectionRequestAccept: no FCM token for ${fromUserId}, skipping.`);
       return;
     }
 
     try {
-      const acceptorName = after.toUserName || "Someone";
+      const acceptorName = after.toUserDisplayName ||
+        (await db.collection("users").doc(toUserId).get()).data()?.displayName ||
+        "Someone";
       await messaging.send({
         token: fcmToken,
         notification: {
-          title: "Follow request accepted",
-          body: `${acceptorName} accepted your follow request`,
+          title: "Connection accepted!",
+          body: `${acceptorName} accepted your connection request`,
         },
         data: {
-          type: "follow_accepted",
+          type: "connection_accepted",
           toUserId,
           requestId: event.params.requestId,
         },
@@ -689,9 +902,9 @@ exports.onFollowRequestAccept = onDocumentWritten(
           },
         },
       });
-      console.log(`onFollowRequestAccept: acceptance notification sent to ${fromUserId}`);
+      console.log(`onConnectionRequestAccept: acceptance notification sent to ${fromUserId}`);
     } catch (err) {
-      console.error("onFollowRequestAccept: failed to send acceptance FCM:", err);
+      console.error("onConnectionRequestAccept: failed to send acceptance FCM:", err);
     }
   },
 );
@@ -706,7 +919,7 @@ exports.onFollowRequestAccept = onDocumentWritten(
  * Cleans up:
  *  1. `emailOtps` — expired OTP documents (expiresAtMs < now).
  *  2. `rateLimits` — contactSync rate-limit windows older than 30 days.
- *  3. `followRequests` — declined/cancelled requests older than 90 days.
+ *  3. `connectionRequests` — declined/cancelled requests older than 90 days.
  *
  * Each collection is processed in batches of 500 to stay within Firestore
  * batch-write limits.
@@ -760,14 +973,14 @@ exports.purgeInactiveData = onSchedule(
       "rateLimits",
     );
 
-    // ── 3. Old declined/cancelled follow requests (90+ days) ──────
+    // ── 3. Old declined/cancelled connection requests (90+ days) ─────
     const ninetyDaysAgo = Timestamp.fromMillis(now - 90 * 24 * 60 * 60 * 1000);
     totalDeleted += await batchDelete(
       db
-        .collection("followRequests")
+        .collection("connectionRequests")
         .where("status", "in", ["declined", "cancelled"])
         .where("createdAt", "<", ninetyDaysAgo),
-      "followRequests",
+      "connectionRequests",
     );
 
     console.log(`purgeInactiveData: total docs deleted = ${totalDeleted}`);

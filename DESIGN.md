@@ -1,5 +1,5 @@
 ---
-name: Scribble
+name: Sketchly
 colors:
   surface: '#fbf8ff'
   surface-dim: '#d6d8f9'
@@ -160,3 +160,4 @@ The shape language is dominated by **extreme roundedness** and **organic asymmet
 - **Chips/Tags:** Small, soft-rounded shapes that look like washi tape. Use semi-transparent versions of the Secondary and Tertiary colors.
 - **Lists:** Instead of dividers, use wide vertical spacing or "torn edge" masks between items.
 - **Navigation:** Bottom navigation bar should be a floating "dock" with high roundedness, not attached to the screen edges.
+- **Initials Avatar (`InitialsAvatar`):** Used as the universal avatar fallback when a user has no profile photo. A circle filled with a warm brand color, overlaid with 1–2 uppercase initials in Quicksand Bold (white). Size scales from 40dp (lists) to 80dp (profile hero) to 96dp (contact history hero). Never fall back to a generic person icon — always use initials.

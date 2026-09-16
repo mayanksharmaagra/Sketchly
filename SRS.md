@@ -3,7 +3,7 @@
 
 **A messaging app where every message is a hand-drawn note or doodle, deliverable instantly and surfaced on the Home Screen via widgets.**
 
-> **Changelog:** Auth simplified — phone + OTP only for V1. Email/password deferred to V2. Contact system split into two paths: phone hash sync + username search. Follow-request system added. Username field added to UserProfile. Raw phone numbers must never leave the device.
+> **Changelog:** Auth simplified — phone + OTP only for V1. Email/password deferred to V2. Contact system split into two paths: phone hash sync + username search. **Follow-request system moved to V2** — gated by `FeatureFlags.ENABLE_CONNECTION_REQUESTS = false`; FR-4 is preserved in code but all UI is hidden. V1 connections form automatically via `onScribbleCreate` reverse-connection upsert. **Block system added** — FR-12; `blocks/{uid}/entries/{targetId}` Firestore sub-collection. **CircleScreen unified for V1** — `HIDE_SUGGESTED_TAB = true`; Suggested/Requests tabs hidden; single view. Username field added to UserProfile. Raw phone numbers must never leave the device. Auto-connect on receive: `reverseConnections` Firestore subcollection, `getReverseConnections()` repository flow, and two-section recipient picker (FR-11).
 
 ---
 
@@ -53,14 +53,16 @@ This document defines functional and non-functional requirements for Sketchly V1
 - FR-3.3 Search result shows: avatar, display name, username, and a "Follow" or "Pending" or "Connected" action button.
 - FR-3.4 Users with isSearchable = false must not appear in search results.
 
-### FR-4: Follow Request System
+### FR-4: Follow Request System *(V2 — gated by `ENABLE_CONNECTION_REQUESTS = false`)*
+
+> All FR-4 requirements are implemented in code but hidden from the UI for V1. Flip `FeatureFlags.ENABLE_CONNECTION_REQUESTS` to `true` to restore the full flow.
 
 - FR-4.1 Any user can send a follow request to any other user they found via contact sync or search.
 - FR-4.2 Recipient receives a push notification when a follow request is received.
 - FR-4.3 Recipient can accept or decline a request. Declining removes the request silently (no notification to sender).
 - FR-4.4 On accept, both users are added to each other's connections list in Room + Firestore.
 - FR-4.5 Sender receives a push notification when their request is accepted.
-- FR-4.6 Users must be mutually connected (both accepted) before either can send a Scribble to the other.
+- FR-4.6 ~~Users must be mutually connected before sending~~ — V1: sending is allowed to any user surfaced via contact sync or reverse-connection (auto-connect on receive).
 - FR-4.7 A user can cancel a pending outgoing request before it is accepted.
 - FR-4.8 Maximum 1 pending request between any two users at a time.
 
@@ -74,7 +76,10 @@ This document defines functional and non-functional requirements for Sketchly V1
 
 ### FR-6: Sending
 
-- FR-6.1 Recipient picker must only show mutually connected users (follow accepted both ways).
+- FR-6.1 The recipient picker shows two sections:
+  - **"Your Contacts"** — users found via contact sync who are on Sketchly.
+  - **"Sent you a Scribble"** — users who have sent the current user a Scribble and are not already in "Your Contacts" (auto-populated via `reverseConnections`, see FR-11). Each row shows a gold "\u21a9 Reply" badge.
+  - Search filters across both sections simultaneously.
 - FR-6.2 Users must be able to select 1 or more recipients (max 10) before sending.
 - FR-6.3 On send, Scribble is written to Room immediately (optimistic UI) and queued for Firestore upload.
 - FR-6.4 If upload fails, retry with exponential backoff (max 5 attempts); show "failed to send — tap to retry" if all fail.
@@ -107,6 +112,26 @@ This document defines functional and non-functional requirements for Sketchly V1
 - FR-10.2 Users can filter history by contact.
 - FR-10.3 History loads with pagination (Paging 3).
 
+### FR-11: Auto-Connect on Receive (Reverse-Connection)
+
+- FR-11.1 When a Scribble is sent, the Cloud Function `onScribbleCreate` must upsert a document in `reverseConnections/{recipientId}/senders/{senderId}` for every recipient who is not the sender (self-send guard).
+- FR-11.2 The upsert must be idempotent: if the document already exists, only `lastReceivedAt` is updated; `firstReceivedAt` is never overwritten.
+- FR-11.3 The document must copy `displayName`, `username`, and `avatarUrl` from the sender’s `users/{senderId}` profile at write time, so clients can render the row without an extra lookup.
+- FR-11.4 Client must listen to `reverseConnections/{uid}/senders` via a Firestore snapshot listener (`ContactRepository.getReverseConnections()`) and surface matching users in the "Sent you a Scribble" section of the recipient picker.
+- FR-11.5 Users in "Sent you a Scribble" who are already present in "Your Contacts" (by userId) must be deduplicated — they should appear only under "Your Contacts".
+- FR-11.6 The `reverseConnections` subcollection must be writable by Admin SDK only. Client writes must be blocked by Firestore Security Rules (`allow write: if false`).
+- FR-11.7 Group Scribbles (multiple recipients) must create reverse-connection entries for **every** eligible recipient, not just the first.
+
+### FR-12: Block User
+
+- FR-12.1 From `SketchlyViewerScreen` (via the ⋮ more menu) or `ContactHistoryScreen`, the current user can block the sender/contact.
+- FR-12.2 On block, the client writes `blocks/{uid}/entries/{targetId}` in Firestore with `targetUserId`, `displayName`, `avatarUrl`, and `blockedAt`.
+- FR-12.3 The client must NOT write to `blocks/{targetId}/entries/{uid}` — each user owns only their own `blocks/{uid}` subtree. Reverse connection teardown is handled server-side.
+- FR-12.4 Immediately after a successful block, `sketchlyRepository.deleteReceivedSketchesFrom(targetUserId)` is called to purge the blocked user’s sketches from the local Room cache.
+- FR-12.5 Blocked users appear in a dedicated **Blocked Users** screen (accessible from Settings), where the current user can unblock them.
+- FR-12.6 Unblock writes a Firestore delete to `blocks/{uid}/entries/{targetId}`.
+- FR-12.7 The block action must not be available on the current user’s own profile (self-block guard).
+
 ---
 
 ## 4. Business Rules
@@ -132,6 +157,7 @@ This document defines functional and non-functional requirements for Sketchly V1
 | **Scribble** | id, senderId, recipientIds[], strokes[], backgroundColor, createdAt, deliveryStatus (per recipient), readStatus (per recipient) |
 | **Stroke** | points[] {x, y, pressure}, colorHex, widthDp |
 | **Reaction** | scribbleId, userId, emoji, createdAt |
+| **ReverseConnection** | (Firestore only) addedVia: "received_scribble", senderId, displayName, username, avatarUrl, firstReceivedAt, lastReceivedAt |
 
 ---
 
@@ -159,6 +185,8 @@ This document defines functional and non-functional requirements for Sketchly V1
   - User can write a FollowRequest only if fromUserId matches their own UID.
   - User can update a FollowRequest status only if toUserId matches their own UID.
   - User can write a Reaction only if the reaction's userId matches their own UID.
+  - User can **read** `reverseConnections/{userId}/senders/{senderId}` only if their UID matches `userId`.
+  - User can **never write** to `reverseConnections` — this collection is Admin SDK only (`allow write: if false`).
 
 ---
 
@@ -182,6 +210,8 @@ This document defines functional and non-functional requirements for Sketchly V1
 - Device offline during contact sync → sync deferred and retried on next foreground; no error shown to user.
 - Two users send each other a follow request simultaneously → system accepts both, establishes connection, no duplicate.
 - Widget on Home Screen, app force-stopped → widget shows last-cached state, does not crash or blank.
+- Sender sends a Scribble to themselves (if allowed via group send) → `onScribbleCreate` self-send guard prevents a `reverseConnections` entry for that sender.
+- Sender appears in both "Your Contacts" and "Sent you a Scribble" after a sync → deduplication logic in `DrawViewModel` keeps them in "Your Contacts" only.
 
 ---
 
@@ -217,7 +247,11 @@ This document defines functional and non-functional requirements for Sketchly V1
 - [ ] Contact sync finds existing Sketchly users and stores them locally without auto-connecting
 - [ ] Username search returns correct user on exact match; returns empty state on no match
 - [ ] Follow request send → recipient notification → accept → both users connected, confirmed in Room + Firestore
-- [ ] Recipient picker only shows mutually connected users
+- [ ] Recipient picker shows "Your Contacts" and "Sent you a Scribble" sections separately
+- [ ] After receiving a Scribble, the sender appears in recipient's "Sent you a Scribble" section without contact sync; verified via Firestore emulator and on-device test
+- [ ] Group Scribble (2+ recipients) creates a `reverseConnections` entry for every eligible recipient
+- [ ] Self-send guard: `onScribbleCreate` never creates a `reverseConnections` entry for `senderId == recipientId`
+- [ ] Client cannot write to `reverseConnections` — Firestore Security Rules block it (verified via emulator)
 - [ ] Scribble sent and received end-to-end in under 20 seconds
 - [ ] Widget updates within 10 seconds of Scribble received without opening the app
 - [ ] All Firestore security rules verified via emulator test suite

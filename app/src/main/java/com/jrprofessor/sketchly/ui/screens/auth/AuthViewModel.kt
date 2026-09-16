@@ -172,6 +172,26 @@ class AuthViewModel @Inject constructor(
         _uiState.update { it.copy(otpDigits = updated, errorMessage = null) }
     }
 
+    /**
+     * Called by the SMS User Consent receiver when Android auto-reads the OTP SMS.
+     * Fills all 6 digits in one shot, then immediately triggers verification.
+     * [onNewUser] / [onReturningUser] are the same nav callbacks as [verifyPhoneOtp].
+     */
+    fun onOtpAutoFilled(
+        code: String,
+        onNewUser: () -> Unit,
+        onReturningUser: () -> Unit,
+    ) {
+        if (code.length != 6 || !code.all { it.isDigit() }) return
+        val digits = code.map { it.toString() }
+        _uiState.update { it.copy(otpDigits = digits, errorMessage = null) }
+        // Give Compose one frame to render the filled boxes, then verify
+        viewModelScope.launch {
+            delay(150L)
+            verifyPhoneOtp(onNewUser = onNewUser, onReturningUser = onReturningUser)
+        }
+    }
+
     // ── Username handling (ProfileSetupScreen) ────
 
     private val usernameRegex = Regex("^[a-zA-Z0-9_]{3,20}$")
@@ -601,9 +621,11 @@ class AuthViewModel @Inject constructor(
                 }
                 _fcmToken.value = token
 
-                // Save to Firestore so server can send push to this device
-                Log.e("TAG", "fetchFcmToken: "+token )
-//                authRepository.saveFcmToken(token)
+                // Save to Firestore so server can send push to this device.
+                // This runs on every app start to ensure the token is current,
+                // which handles the case where FCM refreshed the token silently.
+                Log.d("AuthViewModel", "fetchFcmToken: $token")
+                authRepository.saveFcmToken(token)
 
             } catch (e: Exception) {
                 _fcmToken.value = null

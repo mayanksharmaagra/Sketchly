@@ -210,13 +210,28 @@ private fun EditProfileContent(
                         ) { showImagePickerSheet = true },
                     contentAlignment = Alignment.Center,
                 ) {
-                    val imageSource = uiState.pendingImageUri ?: uiState.avatarUrl
+                    val imageSource = uiState.pendingImageUri
+                        ?: uiState.avatarUrl?.takeIf { it.isNotBlank() }
                     if (imageSource != null) {
-                        AsyncImage(
+                        coil.compose.SubcomposeAsyncImage(
                             model = imageSource,
                             contentDescription = "Avatar",
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize().clip(CircleShape),
+                            error = {
+                                // URL set but failed to load — fall back to initials
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        text = uiState.initials,
+                                        fontSize = 36.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = AppNameColor,
+                                    )
+                                }
+                            },
                         )
                     } else {
                         if (uiState.isUploadingImage) {

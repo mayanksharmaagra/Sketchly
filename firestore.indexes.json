@@ -1,17 +1,53 @@
 {
   "indexes": [
     {
+      "collectionGroup": "connectionRequests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "toUserId", "order": "ASCENDING" },
+        { "fieldPath": "status",   "order": "ASCENDING" },
+        { "fieldPath": "createdAt","order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "connectionRequests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "fromUserId", "order": "ASCENDING" },
+        { "fieldPath": "status",     "order": "ASCENDING" },
+        { "fieldPath": "createdAt",  "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "username",     "order": "ASCENDING" },
+        { "fieldPath": "isSearchable", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "scribbles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "senderId",  "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "scribbles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "recipientIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "createdAt",    "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "connections",
       "queryScope": "COLLECTION",
       "fields": [
-        {
-          "fieldPath": "userAId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "displayName",
-          "order": "ASCENDING"
-        }
+        { "fieldPath": "userAId",     "order": "ASCENDING" },
+        { "fieldPath": "displayName", "order": "ASCENDING" }
       ]
     }
   ],

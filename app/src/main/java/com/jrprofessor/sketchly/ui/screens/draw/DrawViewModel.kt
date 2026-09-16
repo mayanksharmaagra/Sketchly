@@ -6,10 +6,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.jrprofessor.sketchly.data.local.ContactEntity
+import com.jrprofessor.sketchly.data.model.ContactSource
 import com.jrprofessor.sketchly.data.model.DrawPoint
+import com.jrprofessor.sketchly.data.model.SketchlyContact
 import com.jrprofessor.sketchly.data.model.Stroke
 import com.jrprofessor.sketchly.data.model.colorToHex
 import com.jrprofessor.sketchly.data.repository.AuthRepository
+import com.jrprofessor.sketchly.data.repository.BlockRepository
 import com.jrprofessor.sketchly.data.repository.ContactRepository
 import com.jrprofessor.sketchly.data.repository.SketchlyRepository
 import com.jrprofessor.sketchly.data.model.toContactEntity
@@ -28,10 +31,21 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+/**
+ * Groups the recipient-picker list into two visually distinct sections:
+ *  - [yourContacts]  — CONNECTED contacts + contact-sync matches
+ *  - [scribbledYou]  — empty in new model; kept for API compatibility with SendToScreen
+ */
+data class ContactGroups(
+    val yourContacts: List<SketchlyContact> = emptyList(),
+    val scribbledYou: List<SketchlyContact> = emptyList(), // V2: may surface pending-received requests
+)
 
 val PEN_COLORS: List<Color> = listOf(
     InkDefault,                 // Near-black
@@ -58,6 +72,8 @@ data class DrawUiState(
     val showSentDialog: Boolean = false,
     val sentToNames: List<String> = emptyList(),
     val errorMessage: String? = null,
+    /** ID of the sketch that was just sent — used by "Add to Widget" action. */
+    val lastSentSketchId: String? = null,
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -67,6 +83,7 @@ class DrawViewModel @Inject constructor(
     private val authRepository: AuthRepository,
     private val contactRepository: ContactRepository,
     private val sketchRepository: SketchlyRepository,
+    private val blockRepository: BlockRepository,
 ) : ViewModel() {
 
     private val prefs: SharedPreferences =
@@ -79,15 +96,61 @@ class DrawViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(DrawUiState())
     val uiState: StateFlow<DrawUiState> = _uiState.asStateFlow()
 
+    /**
+     * Merged contact groups for the recipient picker.
+     *
+     * Merge rules (new connection-request model):
+     *  - [yourContacts] = connected contacts + suggested (contact-sync matches), deduplicated.
+     *    Only CONNECTED users can actually receive Scribbles; suggested are shown so the sender
+     *    knows who they're connecting with automatically on send.
+     *  - [scribbledYou] = empty in V1 of this model (reverseConnections removed).
+     */
+    /**
+     * Real-time stream of blocked user IDs for the current user.
+     * Used as a second-layer filter on top of the ContactRepository-level block filter,
+     * guarding against any cached Firestore snapshot that fires before the Cloud Function
+     * removes the connection document.
+     */
+    private val blockedIds: StateFlow<Set<String>> =
+        blockRepository.getBlockedUsers()
+            .map { list -> list.map { it.blockedUserId }.toSet() }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
+
+    val contactGroups: StateFlow<ContactGroups> = authRepository.authState
+        .flatMapLatest { user ->
+            if (user != null) {
+                combine(
+                    contactRepository.getSuggestedContacts(),
+                    contactRepository.getConnectedContacts(),
+                    blockedIds,
+                ) { suggested, connected, blocked ->
+                    val all = (connected + suggested)
+                        .distinctBy { it.userId }
+                        .filter { it.userId !in blocked }
+                    ContactGroups(yourContacts = all)
+                }
+            } else {
+                flowOf(ContactGroups())
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ContactGroups())
+
+    /**
+     * Flat [ContactEntity] list for backward-compatible selection UX.
+     * Derived from [contactGroups].
+     */
     val contacts: StateFlow<List<ContactEntity>> = authRepository.authState
         .flatMapLatest { user ->
             if (user != null) {
                 combine(
                     contactRepository.getSuggestedContacts(),
                     contactRepository.getConnectedContacts(),
-                ) { suggested, connected ->
-                    val allList = (suggested + connected).distinctBy { it.userId }
-                    allList.map { it.toContactEntity(user.uid) }
+                    blockedIds,
+                ) { suggested, connected, blocked ->
+                    (connected + suggested)
+                        .distinctBy { it.userId }
+                        .filter { it.userId !in blocked }
+                        .map { it.toContactEntity(user.uid) }
                 }
             } else {
                 flowOf(emptyList())
@@ -252,7 +315,7 @@ class DrawViewModel @Inject constructor(
             )
 
             result.fold(
-                onSuccess = {
+                onSuccess = { sketch ->
                     // Resolve names for the confirmation dialog
                     val names = contacts.value
                         .filter { it.id in state.selectedContactIds }
@@ -265,6 +328,7 @@ class DrawViewModel @Inject constructor(
                             canSend = false,
                             showSentDialog = true,
                             sentToNames = names,
+                            lastSentSketchId = sketch.id,
                         )
                     }
                     _hasDrawnBefore.value = true
@@ -281,5 +345,14 @@ class DrawViewModel @Inject constructor(
                 }
             )
         }
+    }
+
+    /**
+     * Schedules a WidgetUpdateWorker for [sketchId] so the home screen widget
+     * immediately shows that scribble. Called from the "Add to Widget" action
+     * in [SendToScreen]'s confirmation dialog.
+     */
+    fun scheduleWidgetUpdate(sketchId: String) {
+        sketchRepository.scheduleWidgetUpdate(sketchId)
     }
 }

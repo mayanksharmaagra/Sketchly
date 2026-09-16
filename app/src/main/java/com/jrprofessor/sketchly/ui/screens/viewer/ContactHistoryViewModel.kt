@@ -3,6 +3,7 @@ package com.jrprofessor.sketchly.ui.screens.viewer
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.jrprofessor.sketchly.data.model.Sketch
+import com.jrprofessor.sketchly.data.repository.BlockRepository
 import com.jrprofessor.sketchly.data.repository.SketchlyRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -44,6 +45,7 @@ private fun weekLabel(createdAt: Long): String {
 @HiltViewModel
 class ContactHistoryViewModel @Inject constructor(
     private val sketchRepository: SketchlyRepository,
+    private val blockRepository: BlockRepository,
 ) : ViewModel() {
 
     /** Live display name of the contact being viewed */
@@ -102,5 +104,34 @@ class ContactHistoryViewModel @Inject constructor(
                 _isLoading.value = false
             }
         }
+    }
+
+    // ── Block ─────────────────────────────────────────────────────────────
+
+    private val _showBlockDialog = MutableStateFlow(false)
+    val showBlockDialog: StateFlow<Boolean> = _showBlockDialog.asStateFlow()
+
+    fun requestBlock() { _showBlockDialog.value = true }
+    fun dismissBlockDialog() { _showBlockDialog.value = false }
+
+    /**
+     * Blocks the currently-viewed contact.
+     * [contactId] and [displayName] come from the screen's loaded state.
+     * The caller navigates back after completion.
+     */
+    suspend fun blockContact(
+        contactId: String,
+        displayName: String,
+    ): Result<Unit> {
+        _showBlockDialog.value = false
+        val result = blockRepository.blockUser(
+            targetUserId      = contactId,
+            targetDisplayName = displayName.takeIf { it.isNotBlank() } ?: "Sketchly User",
+        )
+        if (result.isSuccess) {
+            // Remove blocked sender's sketches from local Room immediately
+            sketchRepository.deleteReceivedSketchesFrom(contactId)
+        }
+        return result
     }
 }

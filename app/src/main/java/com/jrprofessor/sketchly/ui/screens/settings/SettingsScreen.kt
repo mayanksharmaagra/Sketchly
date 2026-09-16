@@ -47,18 +47,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.lifecycle.ViewModel
+import android.widget.Toast
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewModelScope
-import androidx.work.Constraints
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkManager
-import com.google.firebase.auth.FirebaseUser
-import com.jrprofessor.sketchly.data.model.User
-import com.jrprofessor.sketchly.data.repository.AuthRepository
 import com.jrprofessor.sketchly.data.worker.ContactSyncWorker
 import com.jrprofessor.sketchly.ui.components.SketchlyTopBar
 import com.jrprofessor.sketchly.ui.theme.AppNameColor
@@ -67,109 +57,7 @@ import com.jrprofessor.sketchly.ui.theme.ButtonGold
 import com.jrprofessor.sketchly.ui.theme.SketchlyTheme
 import com.jrprofessor.sketchly.ui.theme.TextEditorBorderColor
 import com.jrprofessor.sketchly.ui.theme.TextMuted
-import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.mapLatest
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
-import java.util.concurrent.TimeUnit
-import javax.inject.Inject
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ViewModel
-// ─────────────────────────────────────────────────────────────────────────────
-
-@OptIn(ExperimentalCoroutinesApi::class)
-@HiltViewModel
-class SettingsViewModel @Inject constructor(
-    private val authRepository: AuthRepository,
-    private val workManager: WorkManager,
-) : ViewModel() {
-
-    private val _isContactSyncEnabled = MutableStateFlow(false)
-    val isContactSyncEnabled: StateFlow<Boolean> = _isContactSyncEnabled.asStateFlow()
-
-    /** FirebaseUser — used for uid and auth state only. displayName is always blank for phone auth. */
-    val currentUser: StateFlow<FirebaseUser?> = authRepository.authState
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), authRepository.currentUser)
-
-    /**
-     * Firestore User document — the REAL source of truth for displayName, username, avatarUrl.
-     * Reloaded automatically whenever auth state changes (login / logout).
-     */
-    val firestoreUser: StateFlow<User?> = authRepository.authState
-        .mapLatest { firebaseUser ->
-            firebaseUser?.uid?.let { uid -> authRepository.getUserProfile(uid) }
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
-
-    /**
-     * Enables periodic contact sync every 24 hours using WorkManager
-     * and triggers an immediate one-time sync task.
-     */
-    fun enableContactSync() {
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
-
-        // 1. Schedule 24-hour periodic work
-        val periodicWorkRequest = PeriodicWorkRequestBuilder<ContactSyncWorker>(
-            24, TimeUnit.HOURS
-        )
-            .setConstraints(constraints)
-            .build()
-
-        workManager.enqueueUniquePeriodicWork(
-            ContactSyncWorker.WORK_NAME,
-            ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE,
-            periodicWorkRequest
-        )
-
-        // 2. Trigger immediate sync task
-        val immediateWorkRequest = OneTimeWorkRequestBuilder<ContactSyncWorker>()
-            .setConstraints(constraints)
-            .build()
-
-        workManager.enqueue(immediateWorkRequest)
-
-        _isContactSyncEnabled.value = true
-    }
-
-    /**
-     * Cancels the periodic WorkManager task for contact sync.
-     */
-    fun disableContactSync() {
-        workManager.cancelUniqueWork(ContactSyncWorker.WORK_NAME)
-        _isContactSyncEnabled.value = false
-    }
-
-    /**
-     * Triggers an immediate one-time contact sync task via WorkManager.
-     */
-    fun syncContactsNow() {
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
-
-        val immediateWorkRequest = OneTimeWorkRequestBuilder<ContactSyncWorker>()
-            .setConstraints(constraints)
-            .build()
-
-        workManager.enqueue(immediateWorkRequest)
-    }
-
-    fun signOut(onSignedOut: () -> Unit) {
-        viewModelScope.launch {
-            authRepository.signOut()
-            onSignedOut()
-        }
-    }
-}
-
+import androidx.compose.runtime.LaunchedEffect
 // ─────────────────────────────────────────────────────────────────────────────
 // Settings Screen
 // ─────────────────────────────────────────────────────────────────────────────
@@ -183,12 +71,13 @@ private fun SettingsScreenPreview() {
             showDoodlePreview = true,
             notifyNewScribbles = true,
             notifyReactions = false,
-            contactSync = false,
+            contactSync = true,
             onShowDoodlePreviewChange = {},
             onNotifyNewScribblesChange = {},
             onNotifyReactionsChange = {},
             onContactSyncChange = {},
             onSyncNow = {},
+            isSyncing = false,
             onBack = {},
             onNavigateToEditProfile = {},
             onSignOut = {},
@@ -201,6 +90,7 @@ fun SettingsScreen(
     onBack: () -> Unit = {},
     onSignedOut: () -> Unit = {},
     onNavigateToEditProfile: () -> Unit = {},
+    onNavigateToBlockedUsers: () -> Unit = {},
     onContactSyncChange: ((Boolean) -> Unit)? = null,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
@@ -259,12 +149,24 @@ fun SettingsScreen(
         }
     }
 
+    val isSyncing by viewModel.isSyncing.collectAsStateWithLifecycle()
+    val syncMessage by viewModel.syncMessage.collectAsStateWithLifecycle()
+
+    // Show Toast whenever syncMessage is set, then clear it
+    LaunchedEffect(syncMessage) {
+        syncMessage?.let { msg ->
+            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+            viewModel.clearSyncMessage()
+        }
+    }
+
     SettingsScreenContent(
         displayName = firestoreUser?.displayName?.takeIf { it.isNotBlank() } ?: "",
         showDoodlePreview = showDoodlePreview,
         notifyNewScribbles = notifyNewScribbles,
         notifyReactions = notifyReactions,
         contactSync = contactSync,
+        isSyncing = isSyncing,
         onShowDoodlePreviewChange = { showDoodlePreview = it },
         onNotifyNewScribblesChange = { notifyNewScribbles = it },
         onNotifyReactionsChange = { notifyReactions = it },
@@ -272,6 +174,7 @@ fun SettingsScreen(
         onSyncNow = { viewModel.syncContactsNow() },
         onBack = onBack,
         onNavigateToEditProfile = onNavigateToEditProfile,
+        onNavigateToBlockedUsers = onNavigateToBlockedUsers,
         onSignOut = { viewModel.signOut(onSignedOut) },
     )
 }
@@ -283,6 +186,7 @@ private fun SettingsScreenContent(
     notifyNewScribbles: Boolean,
     notifyReactions: Boolean,
     contactSync: Boolean,
+    isSyncing: Boolean = false,
     onShowDoodlePreviewChange: (Boolean) -> Unit,
     onNotifyNewScribblesChange: (Boolean) -> Unit,
     onNotifyReactionsChange: (Boolean) -> Unit,
@@ -290,6 +194,7 @@ private fun SettingsScreenContent(
     onSyncNow: () -> Unit,
     onBack: () -> Unit,
     onNavigateToEditProfile: () -> Unit,
+    onNavigateToBlockedUsers: () -> Unit = {},
     onSignOut: () -> Unit,
 ) {
     Column(
@@ -365,6 +270,7 @@ private fun SettingsScreenContent(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable(
+                        enabled = !isSyncing,
                         indication = null,
                         interactionSource = remember { MutableInteractionSource() },
                     ) { onSyncNow() }
@@ -373,17 +279,17 @@ private fun SettingsScreenContent(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
-                    text = "Sync contacts now",
+                    text = if (isSyncing) "Syncing…" else "Sync contacts now",
                     style = MaterialTheme.typography.bodyLarge.copy(
                         fontWeight = FontWeight.Medium,
                         fontSize = 15.sp,
                     ),
-                    color = ButtonGold,
+                    color = if (isSyncing) ButtonGold.copy(alpha = 0.45f) else ButtonGold,
                 )
                 Icon(
                     imageVector = Icons.AutoMirrored.Rounded.ArrowForwardIos,
                     contentDescription = "Sync now",
-                    tint = ButtonGold,
+                    tint = if (isSyncing) ButtonGold.copy(alpha = 0.45f) else ButtonGold,
                     modifier = Modifier.size(14.dp),
                 )
             }
@@ -394,6 +300,14 @@ private fun SettingsScreenContent(
         SettingsNavRow(
             title = "Edit profile",
             onClick = onNavigateToEditProfile,
+        )
+
+        RowDivider()
+
+        // Privacy — Block management
+        SettingsNavRow(
+            title = "Blocked Users",
+            onClick = onNavigateToBlockedUsers,
         )
 
         RowDivider()

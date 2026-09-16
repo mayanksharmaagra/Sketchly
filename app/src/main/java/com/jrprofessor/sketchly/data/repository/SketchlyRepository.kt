@@ -77,6 +77,23 @@ class SketchlyRepository @Inject constructor(
 
     fun getUnreadCount(): Flow<Int> = sketchDao.getUnreadCount()
 
+    /** Live count of all sketches this user has sent — for Profile stats. */
+    fun getSentCount(): Flow<Int> = sketchDao.getSentCount()
+
+    /** Live count of all sketches this user has received — for Profile stats. */
+    fun getReceivedCount(): Flow<Int> = sketchDao.getReceivedCount()
+
+    /** Live count of unique senders — proxy for "friends" stat on Profile. */
+    fun getUniqueSenderCount(): Flow<Int> = sketchDao.getUniqueSenderCount()
+
+    /**
+     * Removes all received sketches from [senderId] from the local Room cache.
+     * Called after blocking a user so their messages disappear from the inbox instantly.
+     */
+    suspend fun deleteReceivedSketchesFrom(senderId: String) {
+        sketchDao.deleteReceivedFrom(senderId)
+    }
+
     /**
      * Live flow of all sketches exchanged with a specific contact —
      * both received from them and sent to them.
@@ -187,7 +204,7 @@ class SketchlyRepository @Inject constructor(
         }
     }
 
-    private fun scheduleWidgetUpdate(sketchId: String) {
+    fun scheduleWidgetUpdate(sketchId: String) {
         val request = OneTimeWorkRequestBuilder<WidgetUpdateWorker>()
             .setInputData(workDataOf(WidgetUpdateWorker.KEY_SKETCH_ID to sketchId))
             .build()
@@ -217,7 +234,11 @@ class SketchlyRepository @Inject constructor(
         inboxListenerRegistration = firestore.collection("scribbles")
             .whereArrayContains("recipientIds", userId)
             .addSnapshotListener { snapshots, error ->
-                if (error != null || snapshots == null) return@addSnapshotListener
+                if (error != null) {
+                    android.util.Log.e("SketchlyRepository", "Inbox listener error (uid=$userId): ${error.message}", error)
+                    return@addSnapshotListener
+                }
+                if (snapshots == null) return@addSnapshotListener
 
                 scope.launch {
                     for (docChange in snapshots.documentChanges) {

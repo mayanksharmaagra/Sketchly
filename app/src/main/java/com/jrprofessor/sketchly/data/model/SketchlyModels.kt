@@ -50,6 +50,24 @@ data class Reaction(
     val createdAt: Long = System.currentTimeMillis(),
 )
 
+/**
+ * A block relationship: [userId] has blocked [blockedUserId].
+ * Stored in Firestore at: blockedUsers/{userId}/entries/{blockedUserId}
+ *
+ * On block:
+ *  - Both sides of the connection are deleted immediately.
+ *  - Scribbles from the blocked sender are silently rejected by the
+ *    onScribbleCreate Cloud Function (server-enforced, not just client-side).
+ *  - Past scribbles are soft-hidden (not deleted) for potential moderation review.
+ */
+data class BlockedUser(
+    val userId: String = "",        // who placed the block
+    val blockedUserId: String = "", // who was blocked
+    val blockedDisplayName: String = "", // display name at time of block (for list UI)
+    val reason: String? = null,     // optional reason (e.g. "inappropriate content")
+    val blockedAt: Long = System.currentTimeMillis(),
+)
+
 /** Convert a Compose Color to a hex string (#AARRGGBB) */
 fun colorToHex(color: Color): String {
     val argb = color.value.toLong()

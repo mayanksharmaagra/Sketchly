@@ -23,6 +23,7 @@ import com.jrprofessor.sketchly.ui.screens.viewer.SketchlyViewerScreen
 import com.jrprofessor.sketchly.ui.screens.contacts.ContactPermissionScreen
 import com.jrprofessor.sketchly.ui.screens.started.StartedScreen
 import com.jrprofessor.sketchly.ui.screens.widget.AddWidgetScreen
+import com.jrprofessor.sketchly.ui.screens.settings.BlockedUsersScreen
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jrprofessor.sketchly.ui.screens.history.HistoryScreen
@@ -91,16 +92,23 @@ fun SketchlyNavGraph(
         }
 
         composable(Screen.Dashboard.route) {
+            val dashboardViewModel = hiltViewModel<com.jrprofessor.sketchly.ui.screens.dashboard.DashboardViewModel>()
             DashboardScreen(
+                dashboardViewModel = dashboardViewModel,
                 onSketchTap = { sketch ->
-                    // Unread → open the viewer (marks as read + shows replay)
-                    // Already read → open contact history for that person
-                    if (!sketch.isRead) {
-                        navController.navigate(Screen.Viewer.createRoute(sketch.id))
-                    } else {
-                        navController.navigate(
-                            Screen.ContactHistory.createRoute(sketch.senderId)
-                        )
+                    val currentUserId = dashboardViewModel.currentUserId
+                    val isMine = sketch.senderId == currentUserId
+
+                    when {
+                        // Unread → always open Viewer (marks as read + replay)
+                        !sketch.isRead -> navController.navigate(Screen.Viewer.createRoute(sketch.id))
+
+                        // Already-read sent sketch → open Viewer (NOT ContactHistory — that
+                        // would pass own UID and show a blank screen)
+                        isMine -> navController.navigate(Screen.Viewer.createRoute(sketch.id))
+
+                        // Already-read received sketch → open ContactHistory for that sender
+                        else -> navController.navigate(Screen.ContactHistory.createRoute(sketch.senderId))
                     }
                 },
                 onDrawTap    = { navController.navigate(Screen.Draw.route) },
@@ -108,6 +116,7 @@ fun SketchlyNavGraph(
                 onProfileTap = { navController.navigate(Screen.Profile.route) },
             )
         }
+
 
         composable(Screen.Draw.route) {
             DrawScreen(
@@ -139,10 +148,19 @@ fun SketchlyNavGraph(
                 onContactToggle = { drawViewModel.toggleContactSelection(it) },
                 onSendConfirmed = { drawViewModel.sendSketch() },
                 onBack = { navController.popBackStack() },
+                // "Maybe later" — skip widget, let user add it manually later
                 onContinue = {
                     drawViewModel.dismissSentDialog()
                     navController.navigate(Screen.AddWidget.route) {
                         popUpTo(Screen.Draw.route) { inclusive = false }
+                    }
+                },
+                // "Add to Widget" — schedule worker then go straight to Dashboard
+                onAddToWidget = {
+                    uiState.lastSentSketchId?.let { drawViewModel.scheduleWidgetUpdate(it) }
+                    drawViewModel.dismissSentDialog()
+                    navController.navigate(Screen.Dashboard.route) {
+                        popUpTo(Screen.Draw.route) { inclusive = true }
                     }
                 },
             )
@@ -164,7 +182,7 @@ fun SketchlyNavGraph(
         }
 
         composable(Screen.FriendsList.route) {
-            FriendsListScreen()
+            FriendsListScreen(onBack = { navController.popBackStack() },)
         }
 
         composable(Screen.Settings.route) {
@@ -177,7 +195,10 @@ fun SketchlyNavGraph(
                 },
                 onNavigateToEditProfile = {
                     navController.navigate(Screen.EditProfile.route)
-                }
+                },
+                onNavigateToBlockedUsers = {
+                    navController.navigate(Screen.BlockedUsers.route)
+                },
             )
         }
 
@@ -224,7 +245,8 @@ fun SketchlyNavGraph(
             val sketchId = backStackEntry.arguments?.getString("sketchId").orEmpty()
             SketchlyViewerScreen(
                 sketchId = sketchId,
-                onBack = { navController.popBackStack() },
+                onBack   = { navController.popBackStack() },
+                onBlock  = { navController.popBackStack() },
             )
         }
 
@@ -236,12 +258,17 @@ fun SketchlyNavGraph(
         ) { backStackEntry ->
             val contactId = backStackEntry.arguments?.getString("contactId").orEmpty()
             ContactHistoryScreen(
-                contactId = contactId,
-                onBack = { navController.popBackStack() },
+                contactId  = contactId,
+                onBack     = { navController.popBackStack() },
                 onSketchTap = { sketchId ->
                     navController.navigate(Screen.Viewer.createRoute(sketchId))
                 },
+                onBlock = { navController.popBackStack() },
             )
+        }
+
+        composable(Screen.BlockedUsers.route) {
+            BlockedUsersScreen(onBack = { navController.popBackStack() })
         }
     }
 }

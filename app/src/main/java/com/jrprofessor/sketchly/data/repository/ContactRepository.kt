@@ -14,7 +14,11 @@ import com.jrprofessor.sketchly.data.model.ContactSource
 import com.jrprofessor.sketchly.data.model.SketchlyContact
 import com.jrprofessor.sketchly.data.model.User
 import com.jrprofessor.sketchly.utils.ContactHashUtil
+import com.jrprofessor.sketchly.utils.FeatureFlags
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.callbackFlow
@@ -45,8 +49,9 @@ class ContactRepository @Inject constructor(
     private fun suggestedRef(uid: String) =
         firestore.collection("users").document(uid).collection("suggestedContacts")
 
-    private fun connectionsRef(uid: String) =
-        firestore.collection("connections").whereEqualTo("userAId", uid)
+    /** Sub-collection that lists everyone uid is connected to. */
+    private fun connectionEntriesRef(uid: String) =
+        firestore.collection("connections").document(uid).collection("entries")
 
     // V1: These Room-based flows are hidden. Contact list is now driven by
     // getSuggestedContacts() and getConnectedContacts() (Firestore-only).
@@ -88,21 +93,115 @@ class ContactRepository @Inject constructor(
     }
 
     /**
-     * Search global users in Firestore by displayName or email prefix for finding friends
+     * Search Firestore users by username prefix.
+     * Resolves connection status relative to the current user.
+     * Returns empty list if query is blank.
      */
-    suspend fun searchGlobalUsers(query: String): List<User> {
+    suspend fun searchByUsername(query: String): List<SketchlyContact> {
         if (query.isBlank()) return emptyList()
+        val uid = fireAuth.currentUser?.uid ?: return emptyList()
+        val lowerQuery = query.trim().lowercase()
         return try {
+            // Firestore prefix query on the indexed `username` field (all usernames are stored lowercase)
             val snapshot = firestore.collection("users")
-                .orderBy("displayName")
-                .startAt(query)
-                .endAt(query + "\uf8ff")
-                .limit(10)
+                .orderBy("username")
+                .startAt(lowerQuery)
+                .endAt(lowerQuery + "\uf8ff")
+                .whereEqualTo("isSearchable", true)
+                .limit(20)
                 .get()
                 .await()
-            snapshot.toObjects(User::class.java)
+
+            // Exclude self; then resolve connection status for each result.
+            //
+            // [FEATURE FLAGGED — V2]
+            // getPendingOutgoingIds() queries connectionRequests and is only called
+            // when ENABLE_CONNECTION_REQUESTS = true to avoid unnecessary Firestore reads.
+            // The call site and the helper are both fully preserved — flip the flag to re-enable.
+            val connected = getConnectedIds(uid)
+            val pending = if (FeatureFlags.ENABLE_CONNECTION_REQUESTS) {
+                getPendingOutgoingIds(uid)
+            } else {
+                emptySet() // no pending concept while flag is off
+            }
+
+            snapshot.documents
+                .filter { it.id != uid }
+                .mapNotNull { doc ->
+                    val username = doc.getString("username") ?: return@mapNotNull null
+                    val displayName = doc.getString("displayName") ?: username
+                    val status = when {
+                        doc.id in connected -> ConnectionStatus.CONNECTED
+                        doc.id in pending   -> ConnectionStatus.PENDING_SENT
+                        else                -> ConnectionStatus.SUGGESTED
+                    }
+                    SketchlyContact(
+                        userId = doc.id,
+                        displayName = displayName,
+                        username = username,
+                        avatarUrl = doc.getString("avatarUrl"),
+                        phoneLastFour = null,
+                        source = ContactSource.SEARCH,
+                        connectionStatus = status,
+                    )
+                }
         } catch (e: Exception) {
+            Log.e(TAG, "searchByUsername failed: ${e.message}", e)
             emptyList()
+        }
+    }
+
+    /**
+     * Returns the set of user IDs to whom the current user has sent a pending connection request.
+     *
+     * [FEATURE FLAGGED — V2] Only called when ENABLE_CONNECTION_REQUESTS = true.
+     * Preserved in full so flipping the flag immediately restores pending-state behaviour.
+     */
+    private suspend fun getPendingOutgoingIds(uid: String): Set<String> {
+        return try {
+            firestore.collection("connectionRequests")
+                .whereEqualTo("fromUserId", uid)
+                .whereEqualTo("status", "pending")
+                .get().await()
+                .documents.mapNotNull { it.getString("toUserId") }.toSet()
+        } catch (e: Exception) { emptySet() }
+    }
+
+    /** Returns the set of user IDs that are confirmed connections of uid. */
+    private suspend fun getConnectedIds(uid: String): Set<String> {
+        return try {
+            connectionEntriesRef(uid).get().await()
+                .documents.map { it.id }.toSet()
+        } catch (e: Exception) { emptySet() }
+    }
+
+    /**
+     * Returns the set of user IDs that the current user has blocked (or who have blocked them).
+     * Used by getSuggestedContacts() to exclude blocked users from the Suggested list.
+     * Both directions are checked: a user blocked by me OR a user who blocked me is excluded.
+     */
+    private suspend fun getBlockedIds(uid: String): Set<String> {
+        // We only read the current user's OWN block list here.
+        //
+        // Why we don't check the reverse direction ("who blocked me") on the client:
+        //   The collectionGroup("entries") query needed for that check collides with
+        //   connections/{userId}/entries/{otherUserId}, whose Firestore rule requires
+        //   isOwner(userId).  Any read of another user's connections entries fails with
+        //   PERMISSION_DENIED, making the collection-group query unreliable/broken.
+        //
+        // The "blocked me" direction is enforced server-side:
+        //   • onScribbleCreate Cloud Function already gates FCM fan-out behind the block check.
+        //   • Suggested-contact lists are populated by matchContactsByHash, which also filters.
+        //   So filtering "blocked me" contacts out of the suggested list is best-effort UI polish,
+        //   not a security boundary — skipping it on the client is safe.
+        return try {
+            firestore
+                .collection("blocks").document(uid).collection("entries")
+                .get().await()
+                .documents.map { it.id }.toSet()
+        } catch (e: Exception) {
+            Log.w(TAG, "getBlockedIds: failed — ${e.message}")
+            emptySet()
         }
     }
 
@@ -287,6 +386,16 @@ class ContactRepository @Inject constructor(
     /**
      * Real-time stream of contact sync results.
      * Used by: Find Friends / "People You May Know" section.
+     *
+     * Filtering applied to every emission (flag-aware):
+     *   - Always excluded: already connected, self, blocked (either direction)
+     *   - Excluded only when ENABLE_CONNECTION_REQUESTS = true:
+     *       users with an outstanding outgoing connection request (PENDING_SENT)
+     *       — no pending concept exists in V1 auto-connect flow.
+     *
+     * getPendingOutgoingIds() and getBlockedIds() are both fully preserved;
+     * they are simply skipped (returning emptySet) while their respective
+     * features are inactive, costing zero Firestore reads.
      */
     fun getSuggestedContacts(): Flow<List<SketchlyContact>> = callbackFlow {
         val uid = fireAuth.currentUser?.uid ?: run {
@@ -304,12 +413,35 @@ class ContactRepository @Inject constructor(
                     close(err)
                     return@addSnapshotListener
                 }
-                val list = snap?.documents
+                val raw = snap?.documents
                     ?.mapNotNull { docToContact(it) }
-                    ?.sortedBy { it.displayName.lowercase() }
                     ?: emptyList()
-                Log.d(TAG, "getSuggestedContacts: snapshot received with ${list.size} contacts")
-                trySend(list)
+
+                // Fetch exclusion sets on IO, then filter and emit.
+                // `this@callbackFlow` is the ProducerScope — its launch() is
+                // bound to the flow's lifecycle so it is cancelled automatically
+                // when the collector cancels (unlike GlobalScope).
+                this@callbackFlow.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    val connectedIds = getConnectedIds(uid)
+                    val blockedIds   = getBlockedIds(uid)
+                    val pendingIds   = if (FeatureFlags.ENABLE_CONNECTION_REQUESTS) {
+                        getPendingOutgoingIds(uid)
+                    } else {
+                        emptySet() // no pending concept while flag is off
+                    }
+
+                    val filtered = raw
+                        .filter { contact ->
+                            contact.userId != uid &&          // self guard
+                            contact.userId !in connectedIds && // already connected
+                            contact.userId !in blockedIds &&   // blocked (either direction)
+                            contact.userId !in pendingIds      // pending sent (V2 only)
+                        }
+                        .sortedBy { it.displayName.lowercase() }
+
+                    Log.d(TAG, "getSuggestedContacts: ${raw.size} raw → ${filtered.size} after filtering")
+                    trySend(filtered)
+                }
             }
 
         awaitClose {
@@ -323,8 +455,10 @@ class ContactRepository @Inject constructor(
     // ============================================================
 
     /**
-     * Real-time stream of accepted connections.
-     * Used by: Recipient Picker (only connected users can receive Scribbles).
+     * Real-time stream of accepted connections from the sub-collection
+     *   connections/{uid}/entries/{otherUserId}
+     * Written exclusively by onConnectionRequestAccept Cloud Function.
+     * Used by: Recipient Picker (DrawViewModel) and the Connected tab.
      */
     fun getConnectedContacts(): Flow<List<SketchlyContact>> = callbackFlow {
         val uid = fireAuth.currentUser?.uid ?: run {
@@ -333,81 +467,81 @@ class ContactRepository @Inject constructor(
             close()
             return@callbackFlow
         }
-        Log.d(TAG, "getConnectedContacts: registering snapshot listener on connections for uid=$uid")
+        Log.d(TAG, "getConnectedContacts: registering listener on connections/$uid/entries")
 
-        val listener = connectionsRef(uid)
+        val listener = connectionEntriesRef(uid)
             .addSnapshotListener { snap, err ->
                 if (err != null) {
                     Log.e(TAG, "getConnectedContacts: listener error — ${err.message}", err)
                     close(err)
                     return@addSnapshotListener
                 }
-                val list = snap?.documents
-                    ?.mapNotNull { docToContact(it) }
-                    ?.sortedBy { it.displayName.lowercase() }
+                val raw = snap?.documents
+                    ?.mapNotNull { doc ->
+                        val otherId = doc.getString("connectedUserId") ?: doc.id
+                        try {
+                            SketchlyContact(
+                                userId           = otherId,
+                                displayName      = doc.getString("displayName") ?: "Sketchly User",
+                                username         = doc.getString("username") ?: "",
+                                avatarUrl        = doc.getString("avatarUrl"),
+                                phoneLastFour    = null,
+                                source           = ContactSource.valueOf(
+                                    doc.getString("source") ?: ContactSource.CONTACT_SYNC.name
+                                ),
+                                connectionStatus = ConnectionStatus.CONNECTED,
+                            )
+                        } catch (_: Exception) { null }
+                    }
                     ?: emptyList()
-                Log.d(TAG, "getConnectedContacts: snapshot received with ${list.size} connected contacts")
-                trySend(list)
+
+                // Filter blocked users on IO — same pattern as getSuggestedContacts().
+                // Covers the race window between the client-side block write and the
+                // onBlockCreate Cloud Function removing the connection document.
+                this@callbackFlow.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    val blockedIds = getBlockedIds(uid)
+                    val filtered = raw
+                        .filter { contact -> contact.userId !in blockedIds }
+                        .sortedBy { it.displayName.lowercase() }
+                    Log.d(TAG, "getConnectedContacts: ${raw.size} raw → ${filtered.size} after block filter")
+                    trySend(filtered)
+                }
             }
 
         awaitClose {
-            Log.d(TAG, "getConnectedContacts: snapshot listener removed")
+            Log.d(TAG, "getConnectedContacts: listener removed")
             listener.remove()
         }
     }
 
-    // ============================================================
-    // 4. SEND FOLLOW REQUEST
-    // ============================================================
-
     /**
-     * Sends a follow request.
-     * requestId = "{fromUid}_{toUid}" — prevents duplicates naturally.
-     * Cloud Function onFollowRequestCreate pushes notification to recipient.
+     * One-shot check: returns true if the current user is connected to [otherUserId].
+     * Used by ViewerViewModel to decide whether to show the "Connect?" banner.
      */
-    suspend fun sendFollowRequest(toUser: SketchlyContact): Result<Unit> {
+    suspend fun isConnectedTo(otherUserId: String): Boolean {
+        val uid = fireAuth.currentUser?.uid ?: return false
         return try {
-            val uid = currentUid
-            val requestId = "${uid}_${toUser.userId}"
-            val ref = firestore.collection("followRequests").document(requestId)
-
-            // Duplicate check
-            if (ref.get().await().exists()) {
-                return Result.failure(IllegalStateException("Request already sent"))
-            }
-
-            ref.set(mapOf(
-                "id"              to requestId,
-                "fromUserId"      to uid,
-                "fromDisplayName" to (fireAuth.currentUser?.displayName ?: ""),
-                "fromAvatarUrl"   to (fireAuth.currentUser?.photoUrl?.toString()),
-                "toUserId"        to toUser.userId,
-                "status"          to "pending",
-                "createdAt"       to com.google.firebase.Timestamp.now(),
-            )).await()
-
-            // Update suggested contact status in Firestore
-            updateSuggestedStatus(toUser.userId, ConnectionStatus.PENDING_SENT)
-
-            Result.success(Unit)
+            connectionEntriesRef(uid).document(otherUserId).get().await().exists()
         } catch (e: Exception) {
-            Result.failure(e)
+            Log.w(TAG, "isConnectedTo: failed — ${e.message}")
+            false
         }
     }
 
     // ============================================================
-    // 5. INCOMING FOLLOW REQUESTS
+    // 3b. INCOMING CONNECTION REQUESTS — Requests tab
     // ============================================================
 
     /**
-     * Real-time stream of pending incoming follow requests.
-     * Used by: Follow Requests screen + notification badge count.
+     * Real-time stream of pending incoming connection requests
+     * (where toUserId == current user).
+     * Used by: Friends screen Requests tab + badge count.
      */
-    fun getIncomingFollowRequests(): Flow<List<SketchlyContact>> = callbackFlow {
+    fun getIncomingConnectionRequests(): Flow<List<SketchlyContact>> = callbackFlow {
         val uid = fireAuth.currentUser?.uid ?: run { trySend(emptyList()); close(); return@callbackFlow }
 
         val listener = firestore
-            .collection("followRequests")
+            .collection("connectionRequests")
             .whereEqualTo("toUserId", uid)
             .whereEqualTo("status", "pending")
             .addSnapshotListener { snap, err ->
@@ -417,10 +551,10 @@ class ContactRepository @Inject constructor(
                     SketchlyContact(
                         userId           = fromUserId,
                         displayName      = doc.getString("fromDisplayName") ?: "Sketchly User",
-                        username         = "",
+                        username         = doc.getString("fromUsername") ?: "",
                         avatarUrl        = doc.getString("fromAvatarUrl"),
                         phoneLastFour    = null,
-                        source           = ContactSource.SEARCH,
+                        source           = ContactSource.CONNECTION_REQUEST,
                         connectionStatus = ConnectionStatus.PENDING_RECEIVED,
                     )
                 } ?: emptyList()
@@ -431,17 +565,68 @@ class ContactRepository @Inject constructor(
     }
 
     // ============================================================
-    // 6. ACCEPT / DECLINE / CANCEL
+    // 4. SEND CONNECTION REQUEST
     // ============================================================
 
     /**
-     * Accepts incoming request → status = "accepted"
-     * Cloud Function onFollowRequestAccept creates connection docs on both sides
-     * and sends FCM to the original sender.
+     * Creates a connection request from the current user to [toUser].
+     * requestId = "{fromUid}_{toUid}" prevents duplicate requests naturally.
+     * Cloud Function onConnectionRequestCreate pushes FCM notification to recipient.
      */
-    suspend fun acceptFollowRequest(fromUserId: String): Result<Unit> {
+    suspend fun sendConnectionRequest(toUser: SketchlyContact): Result<Unit> {
         return try {
-            firestore.collection("followRequests")
+            val uid = currentUid
+            val requestId = "${uid}_${toUser.userId}"
+            val ref = firestore.collection("connectionRequests").document(requestId)
+
+            // Duplicate check — if request already exists just treat as success
+            // (button stays "Pending ✓" — do NOT revert optimistic state)
+            if (ref.get().await().exists()) {
+                Log.d(TAG, "sendConnectionRequest: doc $requestId already exists — treating as success")
+                return Result.success(Unit)
+            }
+
+            // Fetch sender profile from Firestore for the correct display name
+            val senderDoc = firestore.collection("users").document(uid).get().await()
+            val senderName = senderDoc.getString("displayName") ?: fireAuth.currentUser?.displayName ?: ""
+            val senderUsername = senderDoc.getString("username") ?: ""
+            val senderAvatarUrl = senderDoc.getString("avatarUrl") ?: fireAuth.currentUser?.photoUrl?.toString()
+
+            ref.set(mapOf(
+                "id"              to requestId,
+                "fromUserId"      to uid,
+                "fromDisplayName" to senderName,
+                "fromAvatarUrl"   to senderAvatarUrl,
+                "fromUsername"    to senderUsername,
+                "toUserId"        to toUser.userId,
+                "scribbleId"      to "",
+                "status"          to "pending",
+                "createdAt"       to com.google.firebase.Timestamp.now(),
+                "lastDeclinedAt"  to null,
+            )).await()
+
+            // Optimistically update the local suggested contact status
+            updateSuggestedStatus(toUser.userId, ConnectionStatus.PENDING_SENT)
+
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "sendConnectionRequest failed: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    // ============================================================
+    // 5. ACCEPT / DECLINE / CANCEL
+    // ============================================================
+
+    /**
+     * Accepts an incoming connection request.
+     * Cloud Function onConnectionRequestAccept creates symmetric
+     * connections/{uid}/entries/{other} docs and notifies the sender.
+     */
+    suspend fun acceptConnectionRequest(fromUserId: String): Result<Unit> {
+        return try {
+            firestore.collection("connectionRequests")
                 .document("${fromUserId}_${currentUid}")
                 .update(mapOf(
                     "status"    to "accepted",
@@ -454,16 +639,18 @@ class ContactRepository @Inject constructor(
     }
 
     /**
-     * Declines incoming request → status = "declined"
-     * Silent decline — sender is NOT notified (per SRS).
+     * Silently declines an incoming connection request.
+     * Sets status=declined + stamps lastDeclinedAt (cooldown enforcement in Cloud Function).
+     * Sender is NOT notified (avoids awkwardness per UX spec).
      */
-    suspend fun declineFollowRequest(fromUserId: String): Result<Unit> {
+    suspend fun declineConnectionRequest(fromUserId: String): Result<Unit> {
         return try {
-            firestore.collection("followRequests")
+            firestore.collection("connectionRequests")
                 .document("${fromUserId}_${currentUid}")
                 .update(mapOf(
-                    "status"    to "declined",
-                    "updatedAt" to com.google.firebase.Timestamp.now(),
+                    "status"          to "declined",
+                    "lastDeclinedAt"  to com.google.firebase.Timestamp.now(),
+                    "updatedAt"       to com.google.firebase.Timestamp.now(),
                 )).await()
             Result.success(Unit)
         } catch (e: Exception) {
@@ -472,12 +659,12 @@ class ContactRepository @Inject constructor(
     }
 
     /**
-     * Cancels outgoing pending request.
-     * Deletes the request doc + reverts suggested contact status.
+     * Cancels an outgoing pending connection request.
+     * Deletes the doc + reverts local suggested contact status to SUGGESTED.
      */
-    suspend fun cancelFollowRequest(toUserId: String): Result<Unit> {
+    suspend fun cancelConnectionRequest(toUserId: String): Result<Unit> {
         return try {
-            firestore.collection("followRequests")
+            firestore.collection("connectionRequests")
                 .document("${currentUid}_${toUserId}")
                 .delete()
                 .await()
@@ -486,6 +673,41 @@ class ContactRepository @Inject constructor(
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    // ============================================================
+    // 6. OUTGOING REQUEST STATUS STREAM
+    // ============================================================
+
+    /**
+     * Real-time stream of outgoing pending connection requests sent by the
+     * current user. Used by the Suggested tab to show "Pending" chips.
+     */
+    fun getOutgoingConnectionRequests(): Flow<List<SketchlyContact>> = callbackFlow {
+        val uid = fireAuth.currentUser?.uid ?: run { trySend(emptyList()); close(); return@callbackFlow }
+
+        val listener = firestore
+            .collection("connectionRequests")
+            .whereEqualTo("fromUserId", uid)
+            .whereEqualTo("status", "pending")
+            .addSnapshotListener { snap, err ->
+                if (err != null) { close(err); return@addSnapshotListener }
+                val list = snap?.documents?.mapNotNull { doc ->
+                    val toUserId = doc.getString("toUserId") ?: return@mapNotNull null
+                    SketchlyContact(
+                        userId           = toUserId,
+                        displayName      = "", // display name not stored on outgoing side
+                        username         = "",
+                        avatarUrl        = null,
+                        phoneLastFour    = null,
+                        source           = ContactSource.CONNECTION_REQUEST,
+                        connectionStatus = ConnectionStatus.PENDING_SENT,
+                    )
+                } ?: emptyList()
+                trySend(list)
+            }
+
+        awaitClose { listener.remove() }
     }
 
     // ============================================================
@@ -510,7 +732,8 @@ class ContactRepository @Inject constructor(
     private fun docToContact(
         doc: com.google.firebase.firestore.DocumentSnapshot,
     ): SketchlyContact? {
-        val userId = doc.getString("userId") ?: doc.getString("userBId") ?: doc.id
+        // connections sub-collection docs use "connectedUserId"; suggestedContacts use "userId".
+        val userId = doc.getString("connectedUserId") ?: doc.getString("userId") ?: doc.id
         return try {
             SketchlyContact(
                 userId      = userId,

@@ -2,7 +2,16 @@
 
 > **A messaging app where every message is a hand-drawn note/doodle, delivered instantly and surfaced on the Home Screen via widgets.**
 
-> **Last Updated:** **Firestore connections query composite index error fixed.** Root cause: `ContactRepository.getConnectedContacts()` ran `firestore.collection("connections").whereEqualTo("userAId", uid).orderBy("displayName")` which requires a composite Firestore index. Fixed by querying `connectionsRef(uid)` without server-side `orderBy` and sorting client-side in Kotlin (`sortedBy { it.displayName.lowercase() }`), and adding the composite index definition to `firestore.indexes.json`. Build verified (`assembleDebug` SUCCESS).
+> **Last Updated:** **Block filter race-condition fix + viewer recipient name resolution.**
+> - `getConnectedContacts()` in `ContactRepository` now calls `getBlockedIds(uid)` on every Firestore snapshot and filters before emitting — same pattern as `getSuggestedContacts()`. Blocked users disappear from the contact list and `SendToScreen` immediately, without waiting for the Cloud Function.
+> - `DrawViewModel` injects `BlockRepository` and exposes `blockedIds: StateFlow<Set<String>>`. Both `contacts` and `contactGroups` flows `combine(…, blockedIds)` and filter — second line of defence on top of the repository-level fix.
+> - `SketchlyViewerScreen` / `ViewerViewModel`: added `recipientDisplayNames: Map<String, String>` to `ViewerUiState`. After loading a sketch, if `isSender == true`, a one-shot `.first()` collect of `getConnectedContacts()` builds a `uid → displayName` map. Top bar now shows the real recipient name instead of the raw Firebase UID.
+> - `BlockRepository` + `BlockViewModel` + `BlockedUsersScreen` added; `ProfileScreen` block/unblock flow wired up.
+> - `BlockRepository.blockUser()` uses a single-doc write (client owns only `blocks/{uid}/entries/{targetId}`); cross-user connection teardown is deferred to the server-side Cloud Function to avoid `PERMISSION_DENIED` batch rollback.
+> - `SketchlyViewerScreen` + `ContactHistoryViewModel` both call `sketchlyRepository.deleteReceivedSketchesFrom(targetUserId)` immediately after block to clean up Room.
+> - `CircleScreen` unified for V1: `FeatureFlags.HIDE_SUGGESTED_TAB = true` hides the tab row; `UnifiedCircleScreen` composable renders Sync Contacts card + connected users list on one screen. Old tab composables (`SuggestedTab`, `RequestsTab`) are preserved for V2.
+> - Avatar fallback convention: if `avatarUrl` is blank/null, render name-initials circle (`InitialsAvatar` composable) everywhere — `ProfileScreen`, `EditProfileScreen`, `ContactHistoryScreen`, `ContactHistoryHeader`.
+> - NavGraph self-tap guard: tapping a sketch from the current user's own profile no longer navigates to `ContactHistoryScreen` (blank screen); route is silently dropped.
 
 ---
 
@@ -47,6 +56,7 @@ Sketchly/
 │   │   │   └── User.kt
 │   │   ├── repository/     # Data layer (single source of truth)
 │   │   │   ├── AuthRepository.kt
+│   │   │   ├── BlockRepository.kt       # Block / unblock user; writes to blocks/{uid}/entries/{targetId}
 │   │   │   ├── ContactRepository.kt
 │   │   │   └── SketchlyRepository.kt
 │   │   ├── service/
@@ -83,8 +93,8 @@ Sketchly/
 │   │   │   │   │   ├── DrawScreen.kt           # Full-screen canvas (no bottom bar)
 │   │   │   │   │   └── DrawViewModel.kt
 │   │   │   │   ├── circle/
-│   │   │   │   │   ├── CircleScreen.kt         # Search + colorful avatars
-│   │   │   │   │   └── CircleViewModel.kt
+│   │   │   │   │   ├── CircleScreen.kt         # V1: UnifiedCircleScreen (Sync card + connections list, no tab row)
+│   │   │   │   │   └── CircleViewModel.kt      # default tab = CONNECTED when HIDE_SUGGESTED_TAB=true
 │   │   │   │   ├── send/
 │   │   │   │   │   └── SendToScreen.kt         # Full-screen recipient picker + SentConfirmationDialog
 │   │   │   │   ├── widget/
@@ -95,13 +105,17 @@ Sketchly/
 │   │   │   │   │   └── EditProfileViewModel.kt
 │   │   │   │   ├── viewer/
 │   │   │   │   │   ├── SketchlyViewerScreen.kt          # Redesigned: name/time header, canvas card, 5-emoji bar
-│   │   │   │   │   ├── ContactHistoryScreen.kt          # [NEW] Hero header, 2-col week-grouped scribble grid
-│   │   │   │   │   └── ContactHistoryViewModel.kt       # [NEW] Loads sketches for a contact, groups by week
+│   │   │   │   │   ├── ContactHistoryScreen.kt          # Hero header (initials avatar), 2-col week-grouped scribble grid
+│   │   │   │   │   └── ContactHistoryViewModel.kt       # Loads sketches for a contact, groups by week; injects SketchlyRepository for Room cleanup on block
 │   │   │   │   ├── history/
 │   │   │   │   │   ├── HistoryScreen.kt        # Full-screen History — date-grouped 2-col grid, filter chips
 │   │   │   │   │   └── HistoryViewmodel.kt     # Pagination, HistoryFilter, sender list
 │   │   │   │   ├── settings/
-│   │   │   │   │   └── SettingsScreen.kt       # WIDGET / NOTIFICATIONS / ACCOUNT sections
+│   │   │   │   │   ├── SettingsScreen.kt       # WIDGET / NOTIFICATIONS / ACCOUNT sections
+│   │   │   │   │   └── SettingsViewModel.kt    # Shared VM: currentUser, firestoreUser, contact-sync, signOut
+│   │   │   │   ├── block/
+│   │   │   │   │   ├── BlockedUsersScreen.kt   # List of blocked users + unblock
+│   │   │   │   │   └── BlockViewModel.kt       # Wraps BlockRepository; exposes blockedUsers + blockUser/unblockUser
 │   │   │   │   └── started/
 │   │   │   │       └── StartedScreen.kt        # Onboarding / splash
 │   │   │   └── theme/
@@ -115,7 +129,8 @@ Sketchly/
 │   │   └── AppModule.kt    # Hilt DI bindings
 │   │
 │   ├── utils/
-│   │   └── Utils.kt
+│   │   ├── Utils.kt
+│   │   └── FeatureFlags.kt   # Compile-time feature flags: ENABLE_CONNECTION_REQUESTS, HIDE_SUGGESTED_TAB
 │   │
 │   └── widget/             # Home screen App Widget (Glance)
 │       ├── SketchlyWidget.kt
@@ -193,14 +208,16 @@ The system bottom nav bar is **allowlist-based** in `MainActivity`. The `Dashboa
 
 ### ContactHistoryScreen
 - **Route**: `Screen.ContactHistory` (`"contact_history/{contactId}"`) — navigated to from Dashboard when tapping an **already-read** sketch.
-- **Header**: large circular avatar (most recent sketch thumbnail), contact display name, scribble count + since-label.
+- **Self-tap guard**: if `contactId == currentUserId`, the NavGraph silently skips navigation (no blank screen).
+- **Header (`ContactHeroHeader`)**: large initials-avatar circle (fallback: name initials — NOT the last sketch thumbnail), contact display name, scribble count + since-label.
 - **Body**: week-grouped 2-column grid (THIS WEEK / LAST WEEK / MMM YYYY), each card shows sketch thumbnail + day-of-week chip.
-- **ViewModel**: `ContactHistoryViewModel` — calls `SketchlyRepository.getSketchesWithContact(contactId)`.
+- **ViewModel**: `ContactHistoryViewModel` — calls `SketchlyRepository.getSketchesWithContact(contactId)`. Also injects `SketchlyRepository` to call `deleteReceivedSketchesFrom(contactId)` when the user blocks from this screen.
 
 ### SketchlyViewerScreen (redesigned)
 - **Top bar**: back arrow (left) · contact name centred · "Sent at HH:MM AM" subtitle · ⋮ more (right).
 - **Canvas**: large `PaperIvory` card with rounded corners, full sketch replay.
 - **Emoji bar**: 5 circular buttons (❤️ 😂 ✨ 😮 😢) with warm-sand background and gold ring on selected.
+- **Recipient name resolution**: when `isSender == true`, `ViewerViewModel.loadSketch()` does a one-shot `.first()` collect of `ContactRepository.getConnectedContacts()` to build a `uid → displayName` map stored in `ViewerUiState.recipientDisplayNames`. The top bar resolves the first recipient UID via this map; falls back to the raw UID if not found. Do NOT use `recipientIds.firstOrNull()` directly for display.
 
 ---
 
@@ -282,7 +299,17 @@ The system bottom nav bar is **allowlist-based** in `MainActivity`. The `Dashboa
 - **`DashboardScreen` has NO internal tabs** — `DashTab` enum is gone. The Dashboard only shows the Inbox feed. History lives on `Screen.History` / `HistoryScreen`.
 - **`SketchlyBottomBar` is shown on both `dashboard` and `history` routes** — do NOT add it to Draw, SendTo, Profile, Viewer, or any other route.
 - **`SketchlyBottomBar` tab selection is route-based** — `isHistorySelected = currentRoute == Screen.History.route`. There is no `activeTab` state variable in `MainActivity`.
-- **`SettingsViewModel` is shared** — both `SettingsScreen` and `ProfileScreen` inject it via `hiltViewModel()`. It exposes `currentUser: StateFlow<FirebaseUser?>` and `signOut()`.
+- **`SettingsViewModel` is shared** — both `SettingsScreen` and `ProfileScreen` (and `DashboardScreen` for greeting/initials) inject it via `hiltViewModel()`. File: `ui/screens/settings/SettingsViewModel.kt`. Full public API:
+  - `currentUser: StateFlow<FirebaseUser?>` — Firebase auth state (uid, phone; displayName is always blank for phone auth).
+  - `firestoreUser: StateFlow<User?>` — Firestore `users/{uid}` doc; **the real source of truth** for `displayName`, `username`, `avatarUrl`. Reloaded on every auth state change.
+  - `isContactSyncEnabled: StateFlow<Boolean>` — whether the periodic WorkManager contact-sync job is active.
+  - `isSyncing: StateFlow<Boolean>` — true while a manual "Sync contacts now" call is in-flight.
+  - `syncMessage: StateFlow<String?>` — one-shot Toast message after `syncContactsNow()` completes; consume then call `clearSyncMessage()`.
+  - `enableContactSync()` — schedules 24-h periodic `ContactSyncWorker` + fires an immediate one-time sync.
+  - `disableContactSync()` — cancels the periodic WorkManager job.
+  - `syncContactsNow()` — triggers an immediate sync via `ContactRepository.syncContacts()`; no-op if already syncing.
+  - `clearSyncMessage()` — resets `syncMessage` to null after UI consumes the Toast.
+  - `signOut(onSignedOut: () -> Unit)` — calls `AuthRepository.signOut()` then invokes the callback for nav.
 - **`DrawViewModel` is scoped to the Draw back-stack entry** — `SendToScreen` retrieves it via `hiltViewModel(navController.getBackStackEntry(Screen.Draw.route))` so contacts and send state are unified across both screens.
 - **`SentConfirmationDialog` is an overlay, not a nav destination** — it is rendered inside `SendToScreen` as a `Box` overlay (dimmed scrim + card) controlled by `DrawViewModel.showSentDialog`. Do NOT convert it into a separate route.
 - **`AddWidgetScreen` uses Android pin API** — calls `AppWidgetManager.requestPinAppWidget()` on Android 8.0+ (API 26+). On older devices or if pinning is not supported, the "Add Widget" button falls back to navigating to `DashboardScreen`.
@@ -297,14 +324,33 @@ The system bottom nav bar is **allowlist-based** in `MainActivity`. The `Dashboa
 - **`onFollowRequestAccept` fires on `followRequests/{requestId}` onWrite** — only acts when `status` flips to `"accepted"`. Creates two symmetric docs in `connections/`: `{fromUserId}_{toUserId}` and `{toUserId}_{fromUserId}`, each with `userAId`, `userBId`, `createdAt`. Then sends FCM (channelId: `"social"`) to `fromUserId`. The `toUserName` field must be present in the follow-request doc for the notification body.
 - **`purgeInactiveData` is a scheduled function** — uses `onSchedule` from `firebase-functions/v2/scheduler`. Cron: `"0 3 1 * *"` (1st of month, 03:00 UTC). Deletes: expired `emailOtps` (where `expiresAtMs < now`), stale `rateLimits` windows (where `windowStart < 30 days ago`), and old declined/cancelled `followRequests` (where `createdAt < 90 days ago`). Uses batch deletes of 500 docs to avoid Firestore limits.
 - **`sendEmailOtp` and `verifyEmailOtp` are V2 callables** — preserved in `functions/index.js` for the V2 email auth flow. Do NOT delete them. They are NOT called by any V1 Android code path.
-- **`social` FCM notification channel** — client-side Android code must create a `NotificationChannel` with id `"social"` at app startup (alongside `"reactions"`) to receive follow-request notifications.
-- **V1 Circle screen shows empty contacts list** — `ContactRepository.getContacts()` returns `emptyFlow()` in V1. `CircleViewModel.contacts` is always an empty `StateFlow<List<ContactEntity>>`. The "Add Friend" FAB + `AddFriendSheet` are commented out. Users find connections only via Contact Sync (`ContactPermissionScreen` → `matchContactsByHash`).
+- **`social` FCM notification channel** — `SketchlyMessagingService.createNotificationChannels()` now creates three channels: `"reactions"` (HIGH), `"sketches"` (DEFAULT), and `"social"` (DEFAULT). The `"social"` channel is required by `onFollowRequestCreate` and `onFollowRequestAccept` Cloud Functions — without it, follow-request push notifications are silently dropped by the OS. Constant `CHANNEL_SOCIAL = "social"` is defined in the `SketchlyMessagingService` companion object.
+- **`POST_NOTIFICATIONS` runtime permission (Android 13+ / API 33+)** — declaring the permission in `AndroidManifest.xml` alone is NOT sufficient on API 33+. `MainActivity.onCreate` uses `registerForActivityResult(ActivityResultContracts.RequestPermission())` to request `Manifest.permission.POST_NOTIFICATIONS` at runtime if not already granted. The result callback is a no-op — the app degrades gracefully if the user denies. Do NOT remove this launcher or skip the `Build.VERSION.SDK_INT >= TIRAMISU` guard.
+- **V1 Circle screen is a unified single view** — `FeatureFlags.HIDE_SUGGESTED_TAB = true` causes `FriendsListScreen` to render `UnifiedCircleScreen` instead of `CircleScreenContent`. `UnifiedCircleScreen` shows: search bar → Sync Contacts card → connected users list. The old `SuggestedTab` and `RequestsTab` composables are **preserved** in code but not rendered. Flip flag to `false` to restore V2 tab layout.
+- **`CircleUiState.selectedTab` defaults to `CONNECTED`** when `HIDE_SUGGESTED_TAB = true`. Do NOT change this default — the V1 screen depends on it.
+- **`ContactRepository.getContacts()` returns `emptyFlow()` in V1** — `CircleViewModel.contacts` is always an empty `StateFlow<List<ContactEntity>>`. The "Add Friend" FAB + `AddFriendSheet` are commented out.
 - **`ContactDao` provider is commented out in `AppModule`** — `SketchlyDatabase` + `SketchlyDao` are still active (needed by `SketchlyRepository` for draft). Do NOT comment out `provideSketchlyDatabase()` or `provideSketchlyDao()` — only `provideContactDao()` is V1-hidden.
 - **`AuthRepository` does NOT clear Room on sign-out in V1** — `db.clearAllTables()` is commented out. Since no local contact/sketch cache exists in V1, this is safe. Re-enable for V2 when Room cache is active.
 - **`firebase-storage` and `coil-compose` are now required dependencies** — added to `app/build.gradle.kts` and `gradle/libs.versions.toml`. `firebase-storage` is used by `EditProfileRepository` (avatar upload). `coil-compose` is used by `EditProfileScreen` (`AsyncImage`).
 - **`UserProfile` is defined inside `EditProfileRepository.kt`** — it lives in `com.jrprofessor.sketchly.data.repository` package at the bottom of the file. Do NOT import it from `data.model` — there is no `data.model.UserProfile` class.
 - **`SketchlyTopBar` is the uniform top bar for all screens with back navigation** — background is `ToolBarBgColor`, height is 56.dp, back button uses `AppNameColor`, title is centered. It calls `.background(ToolBarBgColor).statusBarsPadding().height(56.dp)` so status bar color matches the bar. Outer columns must NOT apply `statusBarsPadding()` to avoid double padding. `MainActivity` sets `SystemBarStyle.light()` for transparent status bar with dark icons.
 - **First scribble title in `DrawScreen`** — checks `DrawViewModel.hasDrawnBefore`. First time displays "Draw your first Scribble", subsequent times display "New Scribble". Mark occurs when sketch is sent or if sent sketches exist in Room.
+- **Avatar fallback is always name initials** — wherever `avatarUrl` is blank/null, render the `InitialsAvatar` composable (a colored circle with the first 1–2 initials of `displayName`). This applies to `ProfileScreen`, `EditProfileScreen`, `ContactHistoryScreen` (hero header), and any other avatar site. Do NOT render a generic placeholder icon.
+- **`reverseConnections` is a TOP-LEVEL Firestore collection** — path is `reverseConnections/{recipientId}/senders/{senderId}`. Do NOT confuse with the flat `connections/{id}` collection used by the follow-request system (`onFollowRequestAccept`). These two collections are completely separate.
+- **`reverseConnections` is Admin SDK write-only** — `firestore.rules` has `allow write: if false` on this path. No client SDK call should ever attempt to write here. Writes come exclusively from `onScribbleCreate` Cloud Function.
+- **`ContactGroups` is defined in `DrawViewModel.kt`** — it is a top-level `data class` in that file (not in a separate models file). Do NOT look for it in `data/model/`.
+- **`DrawViewModel.contactGroups` uses four combined flows** — `getSuggestedContacts()` + `getConnectedContacts()` + `blockedIds` (from `BlockRepository`). Both `contacts` and `contactGroups` StateFlows filter out any contact whose `userId` is in `blockedIds`. Do NOT regress to a two-stream combine or omit the block filter.
+- **`ContactSource.RECEIVED_SCRIBBLE` is the enum value for reverse contacts** — used in `ContactRepository.getReverseConnections()` and in `SendToScreen` preview code. Do NOT remove it.
+- **`SendToScreen` now takes a `reverseContacts: List<SketchlyContact>` parameter** — this is passed from `SketchlyNavGraph` via `drawViewModel.contactGroups.scribbledYou`. Do NOT remove this parameter or make it optional with a default — callers must always supply it.
+- **`ReverseContactRow` shows a gold `ButtonGold`-colored "↩ Reply" pill** — this is a `Surface` with `color = ButtonGold.copy(alpha = 0.15f)` and text `color = ButtonGold`. The badge communicates to the user that this contact auto-appeared because they sent a Scribble. Do NOT remove the badge without a design decision.
+- **Self-send guard in `onScribbleCreate`** — `.filter((recipientId) => recipientId !== senderId)` is applied before the reverse-connection upsert loop. If you add new logic inside that loop, make sure it stays inside the filtered list.
+- **Reverse-connection upsert is idempotent** — the function checks `existing.exists` before writing. If the doc already exists it only calls `update({ lastReceivedAt })`, never touching `firstReceivedAt`. Do NOT replace this with `set(..., { merge: true })` for both cases — that would silently overwrite `firstReceivedAt`.
+- **Sender profile fetch in `onScribbleCreate` is non-fatal** — if the `users/{senderId}` doc fetch fails, the function falls back to `{ displayName: "Sketchly User", username: "", avatarUrl: null }` and still upserts the reverse-connection entries. Never make the profile fetch block the upsert.
+- **Block system — client-side scope** — `BlockRepository.blockUser(targetId)` writes ONE doc to `blocks/{uid}/entries/{targetId}`. It does NOT write to the reverse path (`blocks/{targetId}/entries/{uid}`) — that would cause `PERMISSION_DENIED` (each user owns only their own `blocks/{uid}` sub-tree). Reverse connection teardown (removing the target from the sender's `connections/`) is handled by the server-side Admin SDK Cloud Function, not the client.
+- **Block filter is applied client-side immediately** — `ContactRepository.getConnectedContacts()` calls `getBlockedIds(uid)` on every Firestore snapshot and filters out blocked users before emitting. `DrawViewModel` further combines with a `blockedIds: StateFlow<Set<String>>` from `BlockRepository`. Blocked users disappear from the contact list / `SendToScreen` **instantly** on block — no need to wait for the Cloud Function to remove the connection document.
+- **Block + Room cleanup** — after `blockUser()` succeeds, both `SketchlyViewerScreen` and `ContactHistoryViewModel` call `sketchlyRepository.deleteReceivedSketchesFrom(targetUserId)` to immediately purge the blocked user's sketches from the local Room cache, keeping the dashboard feed clean.
+- **`BlockViewModel` is scoped per screen** — inject with `hiltViewModel()` in `ProfileScreen` and `BlockedUsersScreen`. Do NOT share it as a singleton.
+- **`FeatureFlags` lives in `utils/FeatureFlags.kt`** — two flags today: `ENABLE_CONNECTION_REQUESTS = false` (follow-request UI hidden), `HIDE_SUGGESTED_TAB = true` (unified CircleScreen for V1). Add future V2 flags here. NEVER delete gated code — gate it, don't gut it.
 
 ---
 

@@ -1,5 +1,6 @@
 package com.jrprofessor.sketchly.ui.screens.send
 
+import android.util.Log
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -22,7 +23,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -94,6 +94,12 @@ private fun avatarColorFor(name: String): Color =
 // SendToScreen
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Full-screen recipient picker.
+ *
+ * Shows connected contacts from [contacts]. Search filters the list.
+ * [onContactToggle] is called with the contact's userId.
+ */
 @Composable
 fun SendToScreen(
     contacts: List<ContactEntity>,
@@ -104,11 +110,13 @@ fun SendToScreen(
     onContactToggle: (String) -> Unit,
     onSendConfirmed: () -> Unit,
     onBack: () -> Unit,
-    onContinue: () -> Unit,   // "Continue" after sent dialog → AddWidget
+    onContinue: () -> Unit,       // "Maybe later" after sent dialog → Dashboard
+    onAddToWidget: () -> Unit,    // "Add to Widget" after sent dialog → schedules widget update
 ) {
     var searchQuery by remember { mutableStateOf("") }
+    Log.e("TAG", "SendToScreen:contacts " + contacts.size)
 
-    val filtered = remember(contacts, searchQuery) {
+    val filteredContacts = remember(contacts, searchQuery) {
         if (searchQuery.isBlank()) contacts
         else contacts.filter {
             it.displayName.contains(searchQuery, ignoreCase = true) ||
@@ -118,6 +126,7 @@ fun SendToScreen(
     }
 
     val selectedCount = selectedContactIds.size
+    val totalVisible = filteredContacts.size
 
     Box(
         modifier = Modifier
@@ -139,10 +148,10 @@ fun SendToScreen(
                     .padding(horizontal = 20.dp, vertical = 8.dp),
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
-            // ── Contact list ─────────────────────────────────────────────────
-            if (filtered.isEmpty()) {
+            // ── Contact list (two sections) ───────────────────────────────────
+            if (totalVisible == 0) {
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -151,7 +160,7 @@ fun SendToScreen(
                 ) {
                     Text(
                         text = if (contacts.isEmpty())
-                            "No contacts yet.\nInvite friends to join Sketchly!"
+                            "No contacts yet.\nAccept connection requests to start sending!"
                         else
                             "No contacts match \"$searchQuery\"",
                         style = MaterialTheme.typography.bodyMedium,
@@ -165,17 +174,29 @@ fun SendToScreen(
                         .weight(1f)
                         .fillMaxWidth(),
                 ) {
-                    items(filtered, key = { it.id }) { contact ->
-                        ContactRow(
-                            contact = contact,
-                            isSelected = contact.id in selectedContactIds,
-                            onToggle = { onContactToggle(contact.id) },
-                        )
-                        HorizontalDivider(
-                            color = TextEditorBorderColor.copy(alpha = 0.5f),
-                            thickness = 0.8.dp,
-                            modifier = Modifier.padding(start = 76.dp),
-                        )
+                    // ── Section 1: Your Contacts ──────────────────────────────
+                    if (filteredContacts.isNotEmpty()) {
+                        item {
+                            SectionHeader(
+                                title = "Your Contacts",
+                                modifier = Modifier.padding(
+                                    start = 20.dp, end = 20.dp,
+                                    top = 12.dp, bottom = 4.dp,
+                                ),
+                            )
+                        }
+                        items(filteredContacts, key = { "primary_${it.id}" }) { contact ->
+                            ContactRow(
+                                contact = contact,
+                                isSelected = contact.id in selectedContactIds,
+                                onToggle = { onContactToggle(contact.id) },
+                            )
+                            HorizontalDivider(
+                                color = TextEditorBorderColor.copy(alpha = 0.5f),
+                                thickness = 0.8.dp,
+                                modifier = Modifier.padding(start = 76.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -201,6 +222,7 @@ fun SendToScreen(
             SentConfirmationDialog(
                 recipientNames = sentToNames,
                 onContinue = onContinue,
+                onAddToWidget = onAddToWidget,
             )
         }
     }
@@ -215,6 +237,24 @@ private fun SendToTopBar(onBack: () -> Unit) {
     SketchlyTopBar(
         title  = "Send to",
         onBack = onBack,
+    )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Section Header
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun SectionHeader(title: String, modifier: Modifier = Modifier) {
+    Text(
+        text = title.uppercase(),
+        style = MaterialTheme.typography.labelSmall.copy(
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.2.sp,
+            fontSize = 11.sp,
+        ),
+        color = TextMuted.copy(alpha = 0.75f),
+        modifier = modifier,
     )
 }
 
@@ -270,7 +310,7 @@ private fun SearchField(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Contact Row
+// Contact Row — "Your Contacts" section (ContactEntity-based, unchanged)
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
@@ -338,29 +378,41 @@ private fun ContactRow(
         }
 
         // Selection indicator
-        if (isSelected) {
-            Box(
-                modifier = Modifier
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .background(ButtonGold),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Check,
-                    contentDescription = "Selected",
-                    tint = Color.White,
-                    modifier = Modifier.size(16.dp),
-                )
-            }
-        } else {
-            Box(
-                modifier = Modifier
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .border(1.5.dp, TextEditorBorderColor, CircleShape),
+        SelectionIndicator(isSelected = isSelected)
+    }
+}
+
+// ReverseContactRow removed — "Sent you a Scribble" section replaced by the
+// Connection Request model. Connections are managed via CircleScreen.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Selection Indicator — shared between both row types
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun SelectionIndicator(isSelected: Boolean) {
+    if (isSelected) {
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .background(ButtonGold),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Check,
+                contentDescription = "Selected",
+                tint = Color.White,
+                modifier = Modifier.size(16.dp),
             )
         }
+    } else {
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .border(1.5.dp, TextEditorBorderColor, CircleShape),
+        )
     }
 }
 
@@ -423,7 +475,8 @@ private fun SendButton(
 @Composable
 private fun SentConfirmationDialog(
     recipientNames: List<String>,
-    onContinue: () -> Unit,
+    onContinue: () -> Unit,   // "Maybe later"
+    onAddToWidget: () -> Unit, // "Add to Widget" (primary action)
 ) {
     val heading = when {
         recipientNames.isEmpty() -> "Scribble sent!"
@@ -487,7 +540,7 @@ private fun SentConfirmationDialog(
                         textAlign = TextAlign.Center,
                     )
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
                     // Subtitle
                     Text(
@@ -497,9 +550,9 @@ private fun SentConfirmationDialog(
                         textAlign = TextAlign.Center,
                     )
 
-                    Spacer(modifier = Modifier.height(32.dp))
+                    Spacer(modifier = Modifier.height(28.dp))
 
-                    // Continue button
+                    // ── Primary: Add to Widget ──────────────────────────────────
                     Surface(
                         shape = PillShape,
                         color = ButtonGold,
@@ -511,14 +564,14 @@ private fun SentConfirmationDialog(
                             .clickable(
                                 indication = null,
                                 interactionSource = remember { MutableInteractionSource() },
-                            ) { onContinue() },
+                            ) { onAddToWidget() },
                     ) {
                         Box(
                             contentAlignment = Alignment.Center,
                             modifier = Modifier.fillMaxSize()
                         ) {
                             Text(
-                                text = "Continue",
+                                text = "📱  Add to Widget",
                                 style = MaterialTheme.typography.titleMedium.copy(
                                     fontWeight = FontWeight.Bold,
                                 ),
@@ -526,6 +579,24 @@ private fun SentConfirmationDialog(
                             )
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // ── Secondary: Maybe later ──────────────────────────────────
+                    Text(
+                        text = "Maybe later",
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 15.sp,
+                        ),
+                        color = TextMuted,
+                        modifier = Modifier
+                            .clickable(
+                                indication = null,
+                                interactionSource = remember { MutableInteractionSource() },
+                            ) { onContinue() }
+                            .padding(vertical = 8.dp, horizontal = 16.dp),
+                    )
                 }
             }
         }
@@ -548,41 +619,42 @@ private fun SendToScreenEmptyPreview() {
             onSendConfirmed = {},
             onBack = {},
             onContinue = {},
+            onAddToWidget = {},
         )
     }
 }
 
-@Preview(name = "SendTo — With Selection", showBackground = true)
+@Preview(name = "SendTo — With Contacts", showBackground = true)
 @Composable
-private fun SendToScreenWithSelectionPreview() {
+private fun SendToScreenWithContactsPreview() {
     val contacts = listOf(
         ContactEntity(
-            id = "1",
+            id = "u1",
             displayName = "Alice Wonderland",
             email = "alice@example.com",
             phoneNumber = "",
             isOnSketchly = true,
             avatarUrl = "",
-            source = "manual",
+            source = "synced",
             createdAt = System.currentTimeMillis(),
-            userId = "",
+            userId = "me",
         ),
         ContactEntity(
-            id = "2",
+            id = "u2",
             displayName = "Bob Builder",
             email = "",
-            phoneNumber = "+1 555 000",
-            isOnSketchly = false,
+            phoneNumber = "+1234567890",
+            isOnSketchly = true,
             avatarUrl = "",
-            source = "manual",
+            source = "connected",
             createdAt = System.currentTimeMillis(),
-            userId = ""
+            userId = "me",
         ),
     )
     SketchlyTheme {
         SendToScreen(
             contacts = contacts,
-            selectedContactIds = setOf("1"),
+            selectedContactIds = setOf("u1"),
             isSending = false,
             showSentDialog = false,
             sentToNames = emptyList(),
@@ -590,6 +662,7 @@ private fun SendToScreenWithSelectionPreview() {
             onSendConfirmed = {},
             onBack = {},
             onContinue = {},
+            onAddToWidget = {},
         )
     }
 }

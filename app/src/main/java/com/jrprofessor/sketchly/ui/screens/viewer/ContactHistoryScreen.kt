@@ -24,16 +24,25 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Undo
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -45,15 +54,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewModelScope
 import com.jrprofessor.sketchly.data.model.Sketch
 import com.jrprofessor.sketchly.ui.components.SketchlyThumbnail
 import com.jrprofessor.sketchly.ui.components.SketchlyTopBar
 import com.jrprofessor.sketchly.ui.theme.AppNameColor
 import com.jrprofessor.sketchly.ui.theme.BgColor
+import com.jrprofessor.sketchly.ui.theme.ButtonGold
 import com.jrprofessor.sketchly.ui.theme.PaperIvory
 import com.jrprofessor.sketchly.ui.theme.TextEditorBorderColor
 import com.jrprofessor.sketchly.ui.theme.TextMuted
 import com.jrprofessor.sketchly.ui.theme.ToolBarBgColor
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -77,6 +89,7 @@ fun ContactHistoryScreen(
     contactId: String,
     onBack: () -> Unit,
     onSketchTap: (String) -> Unit,
+    onBlock: () -> Unit = {},
     viewModel: ContactHistoryViewModel = hiltViewModel(),
 ) {
     val contactDisplayName by viewModel.contactDisplayName.collectAsStateWithLifecycle()
@@ -84,6 +97,7 @@ fun ContactHistoryScreen(
     val sinceLabel         by viewModel.sinceLabel.collectAsStateWithLifecycle()
     val groupedSketches    by viewModel.groupedSketches.collectAsStateWithLifecycle()
     val isLoading          by viewModel.isLoading.collectAsStateWithLifecycle()
+    val showBlockDialog    by viewModel.showBlockDialog.collectAsStateWithLifecycle()
 
     LaunchedEffect(contactId) { viewModel.load(contactId) }
 
@@ -96,6 +110,35 @@ fun ContactHistoryScreen(
         SketchlyTopBar(
             title  = "Sketchly",
             onBack = onBack,
+            rightSlot = {
+                var menuExpanded by remember { mutableStateOf(false) }
+                Box {
+                    IconButton(onClick = { menuExpanded = true }) {
+                        Icon(
+                            imageVector        = Icons.Outlined.MoreVert,
+                            contentDescription = "More options",
+                            tint               = AppNameColor,
+                        )
+                    }
+                    DropdownMenu(
+                        expanded         = menuExpanded,
+                        onDismissRequest = { menuExpanded = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text  = "Block ${contactDisplayName.ifBlank { "user" }}",
+                                    color = Color(0xFFD64242),
+                                )
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                viewModel.requestBlock()
+                            },
+                        )
+                    }
+                }
+            },
         )
 
         // ── Content ──────────────────────────────────────────────────────────
@@ -109,7 +152,6 @@ fun ContactHistoryScreen(
                     contactDisplayName = contactDisplayName,
                     totalCount         = totalCount,
                     sinceLabel         = sinceLabel,
-                    heroSketch         = groupedSketches.values.flatten().firstOrNull(),
                 )
             }
 
@@ -162,6 +204,48 @@ fun ContactHistoryScreen(
             }
         }
     }
+
+    // \u2500\u2500 Block confirmation dialog \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    if (showBlockDialog) {
+        val scope = androidx.compose.runtime.rememberCoroutineScope()
+        AlertDialog(
+            onDismissRequest = viewModel::dismissBlockDialog,
+            title = {
+                Text(
+                    text  = "Block ${contactDisplayName.ifBlank { "this user" }}?",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = AppNameColor,
+                )
+            },
+            text = {
+                Text(
+                    text  = "They won't be able to send you scribbles. " +
+                            "You can unblock them anytime in Settings \u2192 Blocked Users.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TextMuted,
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            viewModel.blockContact(contactId, contactDisplayName)
+                            onBlock()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD64242)),
+                ) {
+                    Text("Block", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismissBlockDialog) {
+                    Text("Cancel", color = TextMuted)
+                }
+            },
+            containerColor = BgColor,
+        )
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -173,9 +257,12 @@ private fun ContactHeroHeader(
     contactDisplayName: String,
     totalCount: Int,
     sinceLabel: String,
-    heroSketch: Sketch?,
 ) {
     val avatarColor = historyAvatarColor(contactDisplayName)
+    val initials = contactDisplayName
+        .split(" ").take(2)
+        .mapNotNull { it.firstOrNull()?.uppercaseChar() }
+        .joinToString("").ifEmpty { "?" }
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -183,36 +270,27 @@ private fun ContactHeroHeader(
             .fillMaxWidth()
             .padding(top = 28.dp, bottom = 20.dp),
     ) {
-        // Large circular avatar — uses most recent sketch thumbnail
+        // Large circular avatar — contact initials with coloured background
         Surface(
             shape           = CircleShape,
-            color           = avatarColor.copy(alpha = 0.12f),
+            color           = avatarColor.copy(alpha = 0.15f),
             shadowElevation = 4.dp,
             modifier        = Modifier
                 .size(110.dp)
-                .border(2.dp, avatarColor.copy(alpha = 0.25f), CircleShape),
+                .border(2.dp, avatarColor.copy(alpha = 0.35f), CircleShape),
         ) {
-            if (heroSketch != null) {
-                SketchlyThumbnail(
-                    strokes = heroSketch.strokes,
-                    size    = 110.dp,
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier         = Modifier.fillMaxSize(),
+            ) {
+                Text(
+                    text  = initials,
+                    style = MaterialTheme.typography.headlineMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontSize   = 40.sp,
+                    ),
+                    color = avatarColor,
                 )
-            } else {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier         = Modifier.fillMaxSize(),
-                ) {
-                    Text(
-                        text  = contactDisplayName
-                            .split(" ").take(2)
-                            .mapNotNull { it.firstOrNull()?.uppercaseChar() }
-                            .joinToString("").ifEmpty { "?" },
-                        style = MaterialTheme.typography.headlineMedium.copy(
-                            fontWeight = FontWeight.Bold,
-                        ),
-                        color = avatarColor,
-                    )
-                }
             }
         }
 

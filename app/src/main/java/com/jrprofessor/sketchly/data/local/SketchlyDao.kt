@@ -66,9 +66,29 @@ interface SketchlyDao {
     @Query("UPDATE sketches SET isRead = 1 WHERE id = :id")
     suspend fun markAsRead(id: String)
 
+    /**
+     * Hard-deletes all received sketches (isSent=0) from [senderId] from the local Room cache.
+     * Called immediately after blocking a user so the inbox clears without requiring a
+     * Firestore write (the client has no update permission on /scribbles).
+     */
+    @Query("DELETE FROM sketches WHERE senderId = :senderId AND isSent = 0")
+    suspend fun deleteReceivedFrom(senderId: String)
+
     /** Count of unread received sketches (for badge) */
     @Query("SELECT COUNT(*) FROM sketches WHERE isRead = 0 AND isSent = 0 AND isDraft = 0")
     fun getUnreadCount(): Flow<Int>
+
+    /** Total sent sketches (for Profile stats) */
+    @Query("SELECT COUNT(*) FROM sketches WHERE isSent = 1 AND isDraft = 0")
+    fun getSentCount(): Flow<Int>
+
+    /** Total received sketches (for Profile stats) */
+    @Query("SELECT COUNT(*) FROM sketches WHERE isSent = 0 AND isDraft = 0")
+    fun getReceivedCount(): Flow<Int>
+
+    /** Distinct senders (proxy for unique friends who sent a scribble) */
+    @Query("SELECT COUNT(DISTINCT senderId) FROM sketches WHERE isSent = 0 AND isDraft = 0 AND senderId != ''")
+    fun getUniqueSenderCount(): Flow<Int>
 
     /**
      * All sketches exchanged with a specific contact — both received from them

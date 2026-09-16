@@ -20,16 +20,17 @@ data class SketchlyContact(
 )
 
 enum class ContactSource {
-    CONTACT_SYNC,   // found via phone hash matching
-    SEARCH,         // found via username search
-    INVITE          // connected via invite link
+    CONTACT_SYNC,        // found via phone hash matching
+    SEARCH,              // found via username search
+    INVITE,              // connected via invite link
+    CONNECTION_REQUEST   // incoming/outgoing connection request (triggered by Scribble send)
 }
 
 enum class ConnectionStatus {
-    SUGGESTED,      // contact sync matched, no follow sent yet
-    PENDING_SENT,   // follow request sent, not yet accepted
-    PENDING_RECEIVED, // they sent us a follow request
-    CONNECTED       // mutually accepted — can exchange Scribbles
+    SUGGESTED,          // contact sync matched, no request sent yet
+    PENDING_SENT,       // connection request sent by us, not yet accepted
+    PENDING_RECEIVED,   // they sent us a connection request
+    CONNECTED           // mutually accepted — can exchange Scribbles
 }
 
 // ============================================================

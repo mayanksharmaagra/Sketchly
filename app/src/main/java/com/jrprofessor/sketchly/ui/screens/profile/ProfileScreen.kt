@@ -69,6 +69,9 @@ private fun ProfileScreenPreview() {
             initials = "MS",
             displayName = "Mayank Sharma",
             email = "+91 98765 43210",
+            sentCount = 42,
+            receivedCount = 17,
+            friendsCount = 8,
             onBack = {},
             onOpenSettings = {},
             onEditProfile = {},
@@ -90,6 +93,9 @@ fun ProfileScreen(
 ) {
     val user by viewModel.currentUser.collectAsStateWithLifecycle()
     val firebaseUser by viewModel.firestoreUser.collectAsStateWithLifecycle()
+    val sentCount by viewModel.sentCount.collectAsStateWithLifecycle()
+    val receivedCount by viewModel.receivedCount.collectAsStateWithLifecycle()
+    val friendsCount by viewModel.friendsCount.collectAsStateWithLifecycle()
 
     val displayName = firebaseUser?.displayName?.takeIf { it.isNotBlank() } ?: "Sketchly User"
     val email = firebaseUser?.email?.takeIf { it.isNotBlank() }
@@ -106,8 +112,11 @@ fun ProfileScreen(
     ProfileScreenContent(
         initials = initials,
         displayName = displayName,
-        avatarUrl = firebaseUser?.avatarUrl,
+        avatarUrl = firebaseUser?.avatarUrl?.takeIf { it.isNotBlank() },
         email = email,
+        sentCount = sentCount,
+        receivedCount = receivedCount,
+        friendsCount = friendsCount,
         onBack = onBack,
         onOpenSettings = onOpenSettings,
         onEditProfile = onEditProfile,
@@ -119,6 +128,9 @@ private fun ProfileScreenContent(
     initials: String,
     displayName: String,
     email: String,
+    sentCount: Int,
+    receivedCount: Int,
+    friendsCount: Int,
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
     onEditProfile: () -> Unit,
@@ -149,16 +161,32 @@ private fun ProfileScreenContent(
                 contentAlignment = Alignment.Center,
             ) {
                 if (!avatarUrl.isNullOrEmpty()) {
-                    AsyncImage(
+                    coil.compose.SubcomposeAsyncImage(
                         model = ImageRequest.Builder(LocalContext.current)
                             .data(avatarUrl)
-                            .crossfade(true)           // smooth fade-in
+                            .crossfade(true)
                             .build(),
                         contentDescription = initials,
-                        contentScale = ContentScale.Crop,  // scale fit — fills the circle, crops edges
+                        contentScale = ContentScale.Crop,
                         modifier = Modifier
                             .fillMaxSize()
                             .clip(CircleShape),
+                        error = {
+                            // URL set but failed to load — show initials
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    text = initials,
+                                    style = MaterialTheme.typography.displayMedium.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 44.sp,
+                                    ),
+                                    color = AppNameColor,
+                                )
+                            }
+                        },
                     )
                 } else {
                     Text(
@@ -234,7 +262,7 @@ private fun ProfileScreenContent(
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            StatItem(value = "—", label = "SENT")
+            StatItem(value = sentCount.toString(), label = "SENT")
 
             // Vertical divider
             Box(
@@ -244,7 +272,7 @@ private fun ProfileScreenContent(
                     .background(TextEditorBorderColor.copy(alpha = 0.55f)),
             )
 
-            StatItem(value = "—", label = "RECEIVED")
+            StatItem(value = receivedCount.toString(), label = "RECEIVED")
 
             Box(
                 modifier = Modifier
@@ -253,7 +281,7 @@ private fun ProfileScreenContent(
                     .background(TextEditorBorderColor.copy(alpha = 0.55f)),
             )
 
-            StatItem(value = "—", label = "FRIENDS")
+            StatItem(value = friendsCount.toString(), label = "FRIENDS")
         }
 
         Spacer(modifier = Modifier.height(20.dp))

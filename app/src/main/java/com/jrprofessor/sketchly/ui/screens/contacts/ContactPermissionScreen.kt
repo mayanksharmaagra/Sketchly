@@ -297,13 +297,12 @@ private fun SuccessState(
     contacts: List<SketchlyContact>,
     onContinue: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-
-        // Contact list
-        if (contacts.isNotEmpty()) {
+    if (contacts.isNotEmpty()) {
+        // Non-empty: list at top, header + button at bottom
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
             LazyColumn(
                 modifier = Modifier
                     .weight(1f)
@@ -314,7 +313,54 @@ private fun SuccessState(
                     ContactRow(contact = contact)
                 }
             }
-        } else {
+
+            Column(
+                modifier = Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "$matchedCount friend${if (matchedCount > 1) "s" else ""} on Sketchly!",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Ink,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Send them a follow request to start exchanging Scribbles.",
+                    fontSize = 13.sp,
+                    color = TextMuted,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 18.sp
+                )
+            }
+
+            Button(
+                onClick = onContinue,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 20.dp)
+                    .height(52.dp),
+                shape = RoundedCornerShape(26.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Ink),
+            ) {
+                Text(
+                    text = "Continue",
+                    color = Color(0xFFF2E8CE),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp
+                )
+            }
+        }
+    } else {
+        // Empty: everything centered vertically
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(36.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
             Box(
                 modifier = Modifier
                     .size(120.dp)
@@ -329,16 +375,11 @@ private fun SuccessState(
                     modifier = Modifier.size(42.dp),
                 )
             }
-        }
 
-        // Header
-        Column(
-            modifier = Modifier.padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
+            Spacer(modifier = Modifier.height(24.dp))
+
             Text(
-                text = if (matchedCount == 0) "No friends found yet"
-                else "$matchedCount friend${if (matchedCount > 1) "s" else ""} on Sketchly!",
+                text = "No friends found yet",
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
                 color = Ink,
@@ -346,31 +387,30 @@ private fun SuccessState(
             )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = if (matchedCount == 0)
-                    "Invite friends to join Sketchly — they'll show up here once they sign up."
-                else "Send them a follow request to start exchanging Scribbles.",
+                text = "Invite friends to join Sketchly — they'll show up here once they sign up.",
                 fontSize = 13.sp,
                 color = TextMuted,
                 textAlign = TextAlign.Center,
                 lineHeight = 18.sp
             )
-        }
-        // Continue button
-        Button(
-            onClick = onContinue,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 20.dp)
-                .height(52.dp),
-            shape = RoundedCornerShape(26.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Ink),
-        ) {
-            Text(
-                text = "Continue",
-                color = Color(0xFFF2E8CE),
-                fontWeight = FontWeight.Bold,
-                fontSize = 15.sp
-            )
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            Button(
+                onClick = onContinue,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                shape = RoundedCornerShape(26.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Ink),
+            ) {
+                Text(
+                    text = "Continue",
+                    color = Color(0xFFF2E8CE),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp
+                )
+            }
         }
     }
 }

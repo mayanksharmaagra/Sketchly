@@ -3,15 +3,17 @@
 
 **A messaging app where every message is a hand-drawn note or doodle, deliverable instantly and surfaced on the Home Screen via widgets.**
 
-> **Changelog:** Auth updated — phone/OTP only. Full Name + Username screen added after OTP. Contact sync + username search + follow-request system added as new milestones. Email/password removed from V1 scope.
+> **Changelog:** Auth updated — phone/OTP only. Full Name + Username screen added after OTP. Contact sync + username search added as new milestones. Email/password removed from V1 scope. **Auto-connect on receive added** — `onScribbleCreate` reverse-connection upsert, `ContactRepository.getReverseConnections()`, `DrawViewModel.contactGroups`, and two-section `SendToScreen` UI. **Block system added** — `BlockRepository`, `BlockViewModel`, `BlockedUsersScreen`. **CircleScreen unified for V1** — `FeatureFlags.HIDE_SUGGESTED_TAB = true`; tab row removed; Sync card + connections list shown on a single screen. **Follow-request UI gated** — `ENABLE_CONNECTION_REQUESTS = false`; V1 connections form automatically via scribble send (reverse-connection path). Avatar fallback is initials everywhere.
 
 ---
 
 ## 1. V1 Scope Recap
 
-**In scope:** phone + OTP auth, username, contact sync (hash matching), username search, follow-request system, draw, send, inbox, widget, emoji reactions, history.
+**In scope:** phone + OTP auth, username, contact sync (hash matching), username search, draw, send, auto-connect on receive, inbox, widget, emoji reactions, history, block user.
 
-**Out of scope:** email/password (V2 from Settings), text tool, video/audio Scribbles, social feed, monetization.
+**V2 gated (code preserved, UI hidden):** follow-request system (`ENABLE_CONNECTION_REQUESTS = false`), suggested contacts tab (`HIDE_SUGGESTED_TAB = true`), email/password auth.
+
+**Out of scope:** text tool, video/audio Scribbles, social feed, monetization.
 
 ---
 
@@ -22,13 +24,14 @@
 | M0 — Project Setup | Repo, tooling, CI, Firebase provisioned |
 | M1 — Auth (Phone + Username) | Signup, OTP verify, name + username screen, login |
 | M2 — User Profile + Firestore | UserProfile model, Firestore write/read, security rules |
-| M3 — Contact Sync | Hash matching, suggested contacts, Room cache |
-| M4 — Search + Follow Request | Username search, follow send/accept/decline, connections |
-| M5 — Draw + Send | Canvas, recipient picker (connected users only), optimistic send |
+| M3 — Contact Sync | Hash matching, synced contacts shown in Circle screen |
+| M4 — Search *(V2: + Follow Request)* | Username search; follow-request flow gated behind `ENABLE_CONNECTION_REQUESTS` |
+| M5 — Draw + Send | Canvas, recipient picker (two-section), optimistic send, auto-connect on receive |
 | M6 — Notifications + Widget | FCM push, Glance widget, WorkManager update job |
 | M7 — Reactions + History | Reaction write, viewer, history screen with pagination |
-| M8 — Hardening + QA | Edge cases, performance, accessibility, security rules audit |
-| M9 — Release Candidate | Internal testing, bug bash, Play Store listing |
+| M8 — Block + Safety | Block user, blocked users list, local Room cleanup, server teardown |
+| M9 — Hardening + QA | Edge cases, performance, accessibility, security rules audit |
+| M10 — Release Candidate | Internal testing, bug bash, Play Store listing |
 
 ---
 
@@ -87,13 +90,18 @@
 ### M5 — Draw + Send
 - [ ] Draw screen: canvas, pointerInput stroke capture, color/thickness picker, undo, clear
 - [ ] Canvas state persists on app background
-- [ ] Recipient picker — only shows mutually connected users (from Room ConnectionEntity)
-- [ ] Multi-select (max 10)
+- [ ] Recipient picker — "Your Contacts" section: only mutually connected users (from Room ConnectionEntity)
+- [ ] Recipient picker — "Sent you a Scribble" section: users from `reverseConnections/{uid}/senders` (auto-connect on receive)
+- [ ] `ContactRepository.getReverseConnections()` — Firestore snapshot listener on `reverseConnections/{uid}/senders`
+- [ ] `DrawViewModel.contactGroups` — three-stream combine of suggested + connected + reverse; deduplication logic
+- [ ] `SendToScreen` two-section UI: section headers, gold "↩ Reply" badge on reverse contacts
+- [ ] Multi-select (max 10) across both sections
 - [ ] Optimistic local write (Room) → async Firestore write
 - [ ] WorkManager retry (exponential backoff, max 5 attempts)
 - [ ] "Failed to send — tap to retry" state
-- [ ] `onScribbleCreate` Cloud Function → FCM fan-out
-- **DoD:** two connected devices can exchange a Scribble end-to-end; failed sends retry and show clear error
+- [ ] `onScribbleCreate` Cloud Function: FCM fan-out **+ reverse-connection upsert** (`reverseConnections/{recipientId}/senders/{senderId}`)
+- [ ] Firestore Security Rules: `reverseConnections` owner-read, `allow write: if false`
+- **DoD:** two connected devices can exchange a Scribble end-to-end; sender appears in recipient's "Sent you a Scribble" picker after first send; group Scribbles create entries for all eligible recipients; failed sends retry and show clear error
 
 ### M6 — Notifications + Home Screen Widget
 - [ ] FCM data message handling (ScribbleMessagingService)
@@ -115,9 +123,10 @@
 ### M8 — Hardening + QA
 - [ ] All error/empty states from SRS §8 implemented and tested
 - [ ] All edge cases from SRS §9 tested and non-crashing
+- [ ] Auto-connect edge cases: self-send guard, deduplication with synced contacts, group Scribble all recipients
 - [ ] Accessibility pass (touch targets, TalkBack, contrast, font scaling)
 - [ ] Performance validation on mid-tier reference device (all SRS §11 targets)
-- [ ] Full Firestore Security Rules audit via emulator suite
+- [ ] Full Firestore Security Rules audit via emulator suite (including `reverseConnections` write-block)
 - [ ] Rate limiting verified (send + follow request limits)
 - [ ] OTP lockout after 3 failed attempts tested
 - [ ] Crashlytics + Performance Monitoring verified in staging

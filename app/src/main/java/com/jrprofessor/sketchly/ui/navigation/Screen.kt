@@ -61,4 +61,7 @@ sealed class Screen(val route: String) {
     data object ContactHistory : Screen("contact_history/{contactId}") {
         fun createRoute(contactId: String) = "contact_history/$contactId"
     }
+
+    /** Blocked Users — list of blocked users with Unblock action (Settings → Privacy) */
+    data object BlockedUsers : Screen("blocked_users")
 }

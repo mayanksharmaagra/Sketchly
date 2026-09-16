@@ -3,7 +3,7 @@
 
 **A messaging app where every message is a hand-drawn note or doodle, deliverable instantly and surfaced on the Home Screen via widgets.**
 
-> **Changelog:** App renamed Scribble → Sketchly. Auth simplified to phone-only for V1. Email/password deferred to V2 (addable from Profile Settings). Contact system updated to phone-sync + username search + follow-request model.
+> **Changelog:** App renamed Scribble → Sketchly. Auth simplified to phone-only for V1. Email/password deferred to V2. Contact system updated to phone-sync + username search. **Follow-request system moved to V2** — gated behind `ENABLE_CONNECTION_REQUESTS = false`; V1 connections form automatically when a Scribble is sent (`onScribbleCreate` reverse-connection path). **Auto-connect on receive** — senders automatically appear in recipient’s reply picker after the first Scribble. **Block system added** — users can block others from the viewer or contact history; blocked user’s sketches removed locally. **CircleScreen unified for V1** — single view showing Sync Contacts card + connected users (no Suggested/Requests tabs).
 
 ---
 
@@ -47,13 +47,15 @@ Sketchly solves this by making hand-drawn communication as fast as sending a tex
 1. **Auth** — phone number + OTP only. Full Name + Username collected after OTP verify
 2. **Contact Sync** — find existing Sketchly users from device contacts (phone hash matching)
 3. **Username Search** — find any user by their unique @username
-4. **Follow Request** — send/accept/decline connection requests; must be mutually connected to exchange Scribbles
-5. **Draw** — freehand canvas with pen color/thickness, undo, clear
-6. **Send instantly** — to connected users (1 or multiple)
-7. **Home Screen widget** — shows latest unread Scribble, tap to open
-8. **Emoji reactions** — quick reaction to a received Scribble
-9. **Inbox** — chronological feed of received Scribbles
-10. **History** — archive of sent + received Scribbles grouped by date
+4. **Draw** — freehand canvas with pen color/thickness, undo, clear
+5. **Send instantly** — to anyone found via contact sync or who has sent the user a Scribble
+6. **Auto-connect on receive** — when a user receives a Scribble, the sender is automatically surfaced in the recipient picker under "Sent you a Scribble" so they can reply without syncing contacts or sending a follow request
+7. **Block user** — block any sender from the Scribble viewer or contact history; blocked user’s sketches are removed from the local feed immediately
+8. **Home Screen widget** — shows latest unread Scribble, tap to open
+9. **Emoji reactions** — quick reaction to a received Scribble
+10. **Inbox** — chronological feed of received Scribbles
+11. **History** — archive of sent + received Scribbles grouped by date
+12. **Circle screen** — unified view: Sync Contacts card + connected users list (no tab navigation in V1)
 
 ---
 
@@ -64,14 +66,18 @@ Sketchly solves this by making hand-drawn communication as fast as sending a tex
 - Full Name + unique Username (chosen right after OTP)
 - Contact sync via hashed phone number matching
 - Username search (exact match)
-- Mutual follow-request system (both users must accept before messaging)
 - 1:1 and small-group (multi-select, max 10) sending
+- Auto-connect on receive (reverse-connection via `onScribbleCreate` Cloud Function)
+- Block user (with local Room cleanup + server-side connection teardown)
 - Single Home Screen widget showing latest Scribble
 - Fixed emoji reaction set (5 options)
 - Local + cloud sync of Scribbles
-- Push notification on new Scribble and follow request received
+- Push notification on new Scribble received
+- Circle screen: unified Sync Contacts card + connections list
 
-**Deferred to V2 (Profile Settings):**
+**Deferred to V2 (code preserved, UI hidden):**
+- Follow-request system (`ENABLE_CONNECTION_REQUESTS = false`) — send/accept/decline + Requests tab in Circle
+- Suggested contacts tab in Circle (`HIDE_SUGGESTED_TAB = true`)
 - Email address (add from Settings, not at signup)
 - Password (set from Settings once email is added)
 - Email-based login (enabled after email + password set)
@@ -92,6 +98,7 @@ Sketchly solves this by making hand-drawn communication as fast as sending a tex
 - As a user, I want to sync my contacts so I can immediately see which friends are already on Sketchly.
 - As a user, I want to search by username so I can find someone even if they are not in my contacts.
 - As a user, I want to send a follow request so I can connect with someone before messaging them.
+- As a user who received a Scribble, I want the sender to appear in my reply picker automatically so I can write back without syncing contacts.
 
 **Core messaging:**
 - As a user, I want to draw a quick note so I can send something personal in seconds.
@@ -131,6 +138,7 @@ Sketchly solves this by making hand-drawn communication as fast as sending a tex
 | Risk | Mitigation |
 |---|---|
 | Cold-start network effect — no connections to message | Contact sync + username search + invite link all work together |
+| One-way discovery gap — sender finds recipient but recipient can't reply | **Auto-connect on receive** — sender is surfaced in recipient's picker after first Scribble |
 | Users don't add the widget | Strong first-run onboarding with widget setup walkthrough |
 | Drawing feels clunky on small screens | Prioritize canvas responsiveness early; 60fps target |
 | Follow request friction reduces sends | Show "Pending" state clearly; notify when accepted |
@@ -162,6 +170,7 @@ Sketchly solves this by making hand-drawn communication as fast as sending a tex
 - [ ] Follow request flow works end-to-end: send → notify recipient → accept/decline → connection established
 - [ ] User can draw and send a Scribble to 1+ connected recipients in under 20 seconds end-to-end
 - [ ] Recipient receives a push notification within 5 seconds of send (normal network conditions)
+- [ ] After receiving a Scribble, the sender appears in the recipient's "Sent you a Scribble" picker section without any contact sync
 - [ ] Home Screen widget updates within 10 seconds of new Scribble received
 - [ ] User can react to a received Scribble with one of the 5 provided emoji
 - [ ] History loads paginated, grouped by date, filterable by contact

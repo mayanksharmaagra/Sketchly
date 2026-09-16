@@ -1,5 +1,5 @@
 # UI/UX Document
-## Scribble
+## Sketchly
 
 **A messaging app where every message is a hand-drawn note or doodle, deliverable instantly and surfaced on the Home Screen via widgets.**
 
@@ -17,12 +17,13 @@
 ## 2. User Journey (First-Time)
 
 ```
-Sign up (phone/email)
-   → Sync or add contacts
+Sign up (phone + OTP)
+   → Choose Full Name + Username
+   → Contact Sync permission + hash matching
    → Guided first drawing (tutorial canvas)
-   → Send first Scribble to a contact
+   → Send first Scribble to a contact (or username search result)
    → Prompt: "Add Scribble to your Home Screen" (widget install walkthrough)
-   → Land on Inbox
+   → Land on Dashboard (Inbox)
 ```
 
 The widget install prompt is placed **after** the first successful send — not before — so the user has already felt the core value before being asked for the extra commitment.
@@ -40,9 +41,10 @@ Bottom Nav (3 tabs):
  └─────────┴─────────┴─────────┘
 ```
 
-- **Draw** is the center tab, visually emphasized (larger icon or elevated FAB-style button) since it's the primary action.
-- Tapping a Scribble in Inbox or History pushes to **Scribble Viewer** (full screen, not a tab).
-- Settings accessible via avatar icon, top-right of Inbox.
+- **Draw** is the center tab, visually emphasized (gold FAB-style button) since it’s the primary action.
+- Tapping a Scribble in Inbox/Dashboard routes to **Scribble Viewer** if unread, or **Contact History** if already read.
+- Settings accessible via avatar icon on Profile screen (from Dashboard top-right or History top-left).
+- **Circle screen** ("Your Circle") is accessible from the Circle icon on the Dashboard top bar.
 
 ---
 
@@ -60,36 +62,59 @@ Bottom Nav (3 tabs):
 - **Interaction:** immediate drawing on touch-down, no mode-switching required. Toolbar auto-collapses to a minimal state after a few seconds of inactive drawing to maximize canvas space, reappears on tap.
 - **States:** empty canvas → Send disabled; ≥1 stroke → Send enabled.
 
-### 4.3 Recipient Picker
+### 4.3 Recipient Picker (SendToScreen)
 - **Purpose:** choose who receives the Scribble.
-- **Layout:** bottom sheet (not full navigation) — search field, scrollable contact list with circular avatars, checkmark on select, sticky "Send to N" button at bottom.
-- **Interaction:** multi-select toggle per contact; button label updates live ("Send to 1" → "Send to 3").
-- **Edge case UI:** contacts not on Scribble yet are shown grayed with an "Invite" label instead of a checkbox.
+- **Layout:** full-screen — search field at top, scrollable two-section contact list, sticky "Send to N" button at bottom.
+- **Two sections:**
+  - **"YOUR CONTACTS"** — users from contact sync. Standard contact row (avatar, name, username, selection circle).
+  - **"SENT YOU A SCRIBBLE"** — users who have already sent the current user a Scribble and are not yet in contacts. Same row layout but with a gold **\u21a9 Reply** pill badge next to their name. Populated automatically by the backend (`onScribbleCreate` Cloud Function) with no user action required.
+- **Search:** filters across both sections simultaneously; matched results appear in their respective section headers.
+- **Interaction:** multi-select toggle per contact; button label updates live ("Send to 1" → "Send to 3"). Selection UX is identical across both sections.
+- **Deduplication:** if a user appears in both sections (e.g., they synced contacts *after* receiving a Scribble), they are shown only under "Your Contacts".
+- **Empty state:** if both sections are empty → "No contacts yet. Invite friends to join Sketchly!"
 
 ### 4.4 Scribble Viewer
-- **Purpose:** view one Scribble fullscreen, react to it.
+- **Purpose:** view one Scribble fullscreen, react to it, optionally block the sender.
 - **Layout:** fullscreen doodle on paper background, sender name + timestamp at top, horizontal emoji reaction row pinned at bottom.
+- **More menu (⋮):** Block User option — only shown if the viewer is NOT the current user’s own sketch.
 - **Interaction:** optional stroke-by-stroke replay animation on first open (delightful, skippable by tap). Reaction row: tap an emoji to react, tap again to remove.
 - **States:** loading (skeleton/paper placeholder), loaded, reaction-sent confirmation (subtle animation, not a modal).
 
-### 4.5 History
+### 4.5 Contact History Screen
+- **Purpose:** view all Scribbles exchanged with one contact in a grid.
+- **Header:** large initials-avatar circle (not a thumbnail), contact display name, scribble count + "since" label.
+- **Body:** week-grouped 2-column grid (THIS WEEK / LAST WEEK / MMM YYYY); each card shows the sketch thumbnail + day-of-week chip.
+- **More menu:** Block User option available from this screen.
+- **Navigation:** reached by tapping an already-read Scribble in Dashboard. Self-tap (own profile) is silently skipped.
+
+### 4.6 History
 - **Purpose:** browse all past sent/received Scribbles.
 - **Layout:** grouped by date section headers (Today / Yesterday / This Week / Earlier), loose grid of thumbnails (corkboard feel) rather than a strict list.
 - **Interaction:** filter chip row at top (All / Sent / Received / by contact), tap thumbnail → Scribble Viewer.
 - **Empty state:** "Nothing here yet" with illustration.
 
-### 4.6 Home Screen Widget
+### 4.7 Circle Screen ("Your Circle")
+- **Purpose:** show all users the current user is connected with.
+- **V1 layout (unified, no tabs):**
+  - Search bar at top — filters connections by name.
+  - **SYNC CONTACTS** section: `SyncContactsCard` with sync status + button.
+  - **YOUR CONNECTIONS · N** section: list of connected users (auto-formed via contact sync + scribble send).
+  - Empty state: “Send someone a scribble — a connection forms automatically.”
+- **V2 (when `HIDE_SUGGESTED_TAB = false`):** restores 3-tab layout — Suggested / Requests / Connected.
+
+### 4.8 Home Screen Widget
 - **Purpose:** primary passive touchpoint.
 - **Layout (2x2):** sticky-note-style card, doodle thumbnail fills most of the space, sender name small at bottom.
 - **Layout (4x2):** same content, wider aspect, slightly larger thumbnail.
 - **States:** unread Scribble present (default), no new Scribbles (calm empty state — e.g., a subtle "all caught up" note, not a dead/blank widget), loading/stale (last-known content shown, never a blank white box).
 - **Interaction:** tap → deep link directly into Scribble Viewer for that item.
 
-### 4.7 Settings (supporting screen, not a nav tab)
+### 4.9 Settings (supporting screen, not a nav tab)
 - Widget content preview toggle (show doodle vs. sender name only)
 - Notification toggle
 - Contact sync management
-- Account/logout
+- **Blocked Users** — list of blocked users with unblock action
+- Account / logout
 
 ---
 

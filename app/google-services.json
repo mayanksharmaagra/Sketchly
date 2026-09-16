@@ -1,6 +1,7 @@
 {
   "project_info": {
     "project_number": "1090829289754",
+    "firebase_url": "https://sketchly-44c83-default-rtdb.firebaseio.com",
     "project_id": "sketchly-44c83",
     "storage_bucket": "sketchly-44c83.firebasestorage.app"
   },
@@ -12,7 +13,20 @@
           "package_name": "com.jrprofessor.sketchly"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "1090829289754-kq9rqi25rkbd4lrue7t8d34stpi1q7sj.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.jrprofessor.sketchly",
+            "certificate_hash": "ba2c71d93fbcce949ea672db6a3dc0aa7883a969"
+          }
+        },
+        {
+          "client_id": "1090829289754-o0cnro1lohvj51qqscron105bkt9t5gr.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyDmHIXaPP3g8spY6qeEnPIFxZpyENCurUE"
@@ -20,7 +34,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1090829289754-o0cnro1lohvj51qqscron105bkt9t5gr.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

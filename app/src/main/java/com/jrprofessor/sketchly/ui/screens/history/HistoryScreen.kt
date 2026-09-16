@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -193,10 +192,10 @@ private fun HistoryContent(
                         HistoryDateHeader(label = dateLabel)
                     }
                     val rows = sketches.chunked(2)
-                    itemsIndexed(
+                    items(
                         rows,
-                        key = { rowIndex, row -> "row_${dateLabel}_${rowIndex}_${row.joinToString("_") { it.id }}" }
-                    ) { _, rowItems ->
+                        key = { row -> "row_${row.first().id}" }
+                    ) { rowItems ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()

@@ -165,11 +165,8 @@ fun AuthScreen(
         onSignUpChanged = viewModel::onSignUpChanged,
         onSubmit = {
             if (uiState.isPhoneMode) {
-                // Phone mode → send SMS OTP. State update (isOtpSent=true) drives
-                // the transition to OtpVerificationScreen automatically.
                 viewModel.sendPhoneOtp(activity!!)
             } else {
-                // Email mode (V2 — not reachable from V1 UI but logic kept)
                 viewModel.submitEmailAuth(
                     onSuccess = onReturningUser,
                     onNeedsOtp = { /* state update shows OTP screen */ },
@@ -184,8 +181,14 @@ fun AuthScreen(
         },
         onOtpDigitChanged = viewModel::onOtpDigitChanged,
         onResendOtp = {
-            // State update inside ViewModel drives OTP screen refresh
             viewModel.resendOtp(activity = if (uiState.isPhoneMode) activity else null)
+        },
+        onAutoFill = { code ->
+            viewModel.onOtpAutoFilled(
+                code = code,
+                onNewUser = onNewUser,
+                onReturningUser = onReturningUser,
+            )
         },
     )
 }
@@ -207,6 +210,8 @@ fun AuthContent(
     onVerifyOtp: () -> Unit,
     onOtpDigitChanged: (Int, String) -> Unit,
     onResendOtp: () -> Unit,
+    /** Auto-fill callback — SMS code extracted from the consent bottom-sheet */
+    onAutoFill: (String) -> Unit = {},
     // Kept for API compat with previews; not used in V1 direct flow
     onSaveDisplayName: () -> Unit = {},
 ) {
@@ -232,6 +237,7 @@ fun AuthContent(
                     onDigitChanged = onOtpDigitChanged,
                     onVerify = onVerifyOtp,
                     onResend = onResendOtp,
+                    onAutoFill = onAutoFill,
                 )
             }
             else -> {

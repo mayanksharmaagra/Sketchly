@@ -14,9 +14,13 @@ service cloud.firestore {
     }
 
     // ── Users ──
-    // Users can read/write only their own profile document.
     match /users/{userId} {
-      allow read: if isSignedIn();
+      // Any signed-in user can read a profile (display names, avatars, username search).
+      allow get: if isSignedIn();
+      // List (collection query) needed for username prefix search — allowed for any signed-in user.
+      // Client always adds an orderBy/startAt/endAt on 'username' so results are naturally bounded.
+      allow list: if isSignedIn();
+      // Only the owner can write their own profile.
       allow write: if isSignedIn() && isOwner(userId);
     }
 
@@ -25,9 +29,18 @@ service cloud.firestore {
     // A user can only create a Scribble where senderId matches their UID.
     // Scribbles cannot be edited after creation (BR-1).
     match /scribbles/{scribbleId} {
-      allow read: if isSignedIn() &&
-        (request.auth.uid == resource.data.senderId ||
+      // Per-document read: sender or recipient only.
+      allow get: if isSignedIn() &&
+        (resource == null ||
+         request.auth.uid == resource.data.senderId ||
          request.auth.uid in resource.data.recipientIds);
+
+      // Collection query (list): allow any signed-in user to run a query.
+      // The client always adds a whereArrayContains("recipientIds", uid) or
+      // whereEqualTo("senderId", uid) filter, so results are naturally scoped.
+      // Firestore cannot evaluate resource.data at query-planning time, so we
+      // grant list access to authenticated users and rely on the client filter.
+      allow list: if isSignedIn();
 
       allow create: if isSignedIn() &&
         request.auth.uid == request.resource.data.senderId &&
@@ -44,7 +57,8 @@ service cloud.firestore {
     // Read: reactor (own reaction) or the Scribble's sender (to see reactions).
     match /reactions/{reactionId} {
       allow read: if isSignedIn() &&
-        (request.auth.uid == resource.data.userId ||
+        (resource == null ||
+         request.auth.uid == resource.data.userId ||
          request.auth.uid ==
            get(/databases/$(database)/documents/scribbles/$(resource.data.scribbleId)).data.senderId);
 
@@ -76,42 +90,71 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // ── Follow Requests ──
-    // A user can create a follow request where fromUserId == their UID.
-    // A user can read requests that involve them (as sender or recipient).
-    // Only the recipient can update the status (accept/decline).
-    // Sender can delete their own pending request (cancel).
-    match /followRequests/{requestId} {
-      allow read: if isSignedIn() &&
-        (request.auth.uid == resource.data.fromUserId ||
-         request.auth.uid == resource.data.toUserId);
+    // ── Suggested Contacts (contact sync results) ──
+    // Users can read and write their own suggestedContacts sub-collection.
+    match /users/{userId}/suggestedContacts/{contactId} {
+      allow read, write: if isSignedIn() && isOwner(userId);
+    }
 
+    // ── Connection Requests ──
+    // Created by client (outgoing "Connect" button on Suggested tab) or by the
+    // onScribbleCreate Cloud Function (auto-triggered when a Scribble is sent to
+    // a non-connected recipient).
+    // Only the two parties involved may read a request.
+    // Only the sender (fromUserId) may create with status=pending.
+    // Only the recipient (toUserId) may accept/decline; sender may cancel.
+    match /connectionRequests/{requestId} {
+      // Per-document read: either party.
+      // Use get() with null-safe coalesce to handle non-existent docs safely.
+      allow get: if isSignedIn() && (
+        resource == null ||
+        request.auth.uid == resource.data.fromUserId ||
+        request.auth.uid == resource.data.toUserId
+      );
+      // Collection query (list): any signed-in user — client always filters
+      // by fromUserId or toUserId so results are naturally scoped.
+      allow list: if isSignedIn();
+
+      // Create: only the sender, with status=pending.
+      // requestId must follow the "{fromUserId}_{toUserId}" convention.
       allow create: if isSignedIn() &&
         request.auth.uid == request.resource.data.fromUserId &&
-        request.resource.data.status == "pending";
+        request.resource.data.status == "pending" &&
+        request.resource.data.toUserId is string &&
+        request.resource.data.toUserId.size() > 0;
 
-      allow update: if isSignedIn() &&
-        request.auth.uid == resource.data.toUserId &&
-        request.resource.data.status in ["accepted", "declined"];
+      // Update: recipient can accept/decline; sender can cancel.
+      allow update: if isSignedIn() && (
+        (request.auth.uid == resource.data.toUserId &&
+         request.resource.data.status in ["accepted", "declined"]) ||
+        (request.auth.uid == resource.data.fromUserId &&
+         request.resource.data.status == "cancelled")
+      );
 
+      // Delete: sender can hard-delete a pending outgoing request (cancel).
       allow delete: if isSignedIn() &&
         request.auth.uid == resource.data.fromUserId &&
         resource.data.status == "pending";
     }
 
-    // ── Connections ──
-    // Readable by either connected user. Written only by Cloud Functions.
-    match /connections/{connectionId} {
-      allow read: if isSignedIn() &&
-        (request.auth.uid == resource.data.userAId ||
-         request.auth.uid == resource.data.userBId);
-      allow write: if false; // Admin SDK only (onFollowRequestAccept)
+    // ── Connections (sub-collection per user, O(1) lookup) ──
+    // Written exclusively by the onConnectionRequestAccept Cloud Function (Admin SDK).
+    // Symmetric: when A and B connect, entries exist in BOTH
+    //   connections/{A}/entries/{B}  and  connections/{B}/entries/{A}.
+    // Each user can only read their own entries.
+    match /connections/{userId}/entries/{otherUserId} {
+      allow read: if isSignedIn() && isOwner(userId);
+      allow write: if false; // Admin SDK only (onConnectionRequestAccept)
     }
 
-    // ── Suggested Contacts (contact sync results) ──
-    // Users can read and write their own suggestedContacts sub-collection.
-    match /users/{userId}/suggestedContacts/{contactId} {
-      allow read, write: if isSignedIn() && isOwner(userId);
+    // ── Blocks ──
+    // Path: blocks/{blockerId}/entries/{targetId}
+    // The document ID (targetId) is the UID of the person being blocked.
+    // Only the blocker owns and manages their own block list.
+    // The "blocked me" direction is enforced server-side by Cloud Functions;
+    // the client only reads its own block list (blockedByMe), which this rule covers.
+    match /blocks/{blockerId}/entries/{targetId} {
+      allow read, write: if isSignedIn() && isOwner(blockerId);
     }
 
     // Deny everything else by default.

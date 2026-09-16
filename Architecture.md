@@ -3,7 +3,7 @@
 
 **A messaging app where every message is a hand-drawn note or doodle, deliverable instantly and surfaced on the Home Screen via widgets.**
 
-> **Changelog:** Auth updated — phone/OTP only for V1. Email/password deferred to V2. UserProfile model updated with username field. Contact system now has two paths: hash-based phone sync + username search. Follow-request collection added to Firestore. Cloud Function for hash matching added.
+> **Changelog:** Auth updated — phone/OTP only for V1. Email/password deferred to V2. UserProfile model updated with username field. Contact system now has two paths: hash-based phone sync + username search. Follow-request collection added to Firestore. Cloud Function for hash matching added. **Auto-connect on receive added** — `onScribbleCreate` now upserts `reverseConnections/{recipientId}/senders/{senderId}` so senders become available as reply targets even when not in a recipient's synced contacts. **Block system added** — `blocks/{uid}/entries/{targetId}` Firestore sub-collection; client writes own block entries only; server Cloud Function handles reverse teardown. **CircleScreen unified for V1** — `FeatureFlags.HIDE_SUGGESTED_TAB = true`; Suggested/Requests tabs hidden; single view shows Sync card + connected users.
 
 ---
 
@@ -95,21 +95,26 @@
 
 ---
 
-## 7. Data Flow — Follow Request Path
+## 7. Data Flow — Follow Request Path *(V2 — gated by `ENABLE_CONNECTION_REQUESTS = false`)*
 
 ```
-1. User taps Follow on a search result or suggested contact
-2. Client writes to Firestore: follow_requests/{requestId}
-   { fromUserId, toUserId, status: "pending", createdAt }
-3. Cloud Function onFollowRequestCreate → sends FCM to toUserId
-4. Recipient opens notification → sees request in Follow Requests screen
-5. Recipient taps Accept:
-   - follow_requests/{id} status → "accepted"
-   - Cloud Function onFollowRequestAccept:
-       writes users/{fromUid}/connections/{toUid}
-       writes users/{toUid}/connections/{fromUid}
-       sends FCM to fromUserId ("X accepted your request")
-6. Both clients update Room (ConnectionEntity) on next sync
+V1: Follow requests are hidden. Connections form automatically:
+  • Via Contact Sync — matchContactsByHash Cloud Function surfaces matched users
+  • Via Scribble Send — onScribbleCreate upserts reverseConnections for auto-connect
+
+V2 flow (when ENABLE_CONNECTION_REQUESTS = true):
+  1. User taps Follow on a search result or suggested contact
+  2. Client writes to Firestore: follow_requests/{requestId}
+     { fromUserId, toUserId, status: "pending", createdAt }
+  3. Cloud Function onFollowRequestCreate → sends FCM to toUserId
+  4. Recipient opens notification → sees request in Follow Requests screen
+  5. Recipient taps Accept:
+     - follow_requests/{id} status → "accepted"
+     - Cloud Function onFollowRequestAccept:
+         writes users/{fromUid}/connections/{toUid}
+         writes users/{toUid}/connections/{fromUid}
+         sends FCM to fromUserId ("X accepted your request")
+  6. Both clients update Room (ConnectionEntity) on next sync
 ```
 
 ---
@@ -120,11 +125,19 @@
 1. User draws → strokes accumulate in ViewModel (in-memory)
 2. User taps Send → Scribble written to Room immediately (optimistic)
 3. Repository writes Scribble to Firestore: scribbles/{id}
-4. Cloud Function onScribbleCreate → FCM data message to each recipientId
+4. Cloud Function onScribbleCreate:
+   a. Fan-out FCM data message to each recipientId
+   b. Fetch sender's public profile (displayName, username, avatarUrl)
+   c. For each recipientId ≠ senderId:
+        Upsert reverseConnections/{recipientId}/senders/{senderId}
+        (idempotent — only updates lastReceivedAt if doc already exists)
 5. Recipient device: FCM → WorkManager job → fetch Scribble → render bitmap
    → write to Room → GlanceAppWidget.update()
 6. Sender's own widget refreshes immediately client-side (no round trip needed)
 ```
+
+> **Reverse-connection effect:** after step 4c, the sender automatically appears in the
+> recipient's "Sent you a Scribble" section of the recipient picker — no contact sync required.
 
 ---
 
@@ -135,10 +148,6 @@ users/
   {uid}/
     displayName, username, phoneNumberHash, avatarUrl,
     isSearchable, createdAt, authProvider
-    
-    connections/
-      {connectedUid}/
-        displayName, username, avatarUrl, connectedSince, source
 
     suggestedConnections/
       {suggestedUid}/
@@ -149,14 +158,35 @@ follow_requests/
     fromUserId, fromDisplayName, fromAvatarUrl,
     toUserId, status, createdAt
 
+connections/
+  {connectionId}/
+    userAId, userBId, createdAt
+    (written by onFollowRequestAccept Cloud Function)
+
+blocks/                              ← NEW — block system
+  {uid}/
+    entries/
+      {targetUserId}/
+        targetUserId, displayName, avatarUrl, blockedAt
+        (client writes own subtree only; reverse teardown via Cloud Function)
+
 scribbles/
   {scribbleId}/
     senderId, recipientIds[], strokes[], backgroundColor,
     createdAt, deliveryStatus{}, readStatus{}
-    
+
     reactions/
       {userId}/
         emoji, createdAt
+
+reverseConnections/              ← auto-connect on receive
+  {recipientId}/
+    senders/
+      {senderId}/
+        addedVia: "received_scribble"
+        senderId, displayName, username, avatarUrl
+        firstReceivedAt, lastReceivedAt
+        (written by onScribbleCreate Cloud Function — Admin SDK only)
 ```
 
 ---
@@ -166,9 +196,10 @@ scribbles/
 | Function | Trigger | Purpose |
 |---|---|---|
 | `matchContactsByHash` | HTTP call (authenticated) | Accepts phone hashes[], returns matched UserProfiles |
-| `onScribbleCreate` | Firestore onCreate | Fan-out FCM push to all recipientIds |
-| `onFollowRequestCreate` | Firestore onCreate | FCM push to toUserId |
-| `onFollowRequestAccept` | Firestore onUpdate (status→accepted) | Create connection docs for both users + FCM to fromUserId |
+| `onScribbleCreate` | Firestore onCreate | Fan-out FCM to all recipientIds **+ upsert `reverseConnections/{recipientId}/senders/{senderId}`** for auto-connect |
+| `onFollowRequestCreate` | Firestore onCreate | FCM push to toUserId *(V2 — gated)* |
+| `onFollowRequestAccept` | Firestore onUpdate (status→accepted) | Create connection docs for both users + FCM to fromUserId *(V2 — gated)* |
+| `onBlockUser` | Firestore onCreate (`blocks/{uid}/entries/{targetId}`) | Tears down reverse connection + removes from `connections/` |
 | `onReactionCreate` | Firestore onCreate | FCM push to Scribble sender |
 | `purgeInactiveData` | Scheduled (monthly) | Data retention cleanup |
 

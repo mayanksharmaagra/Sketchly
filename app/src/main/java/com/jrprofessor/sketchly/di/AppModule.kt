@@ -11,6 +11,7 @@ import com.google.firebase.storage.FirebaseStorage
 import com.jrprofessor.sketchly.data.local.SketchlyDao
 import com.jrprofessor.sketchly.data.local.SketchlyDatabase
 import com.jrprofessor.sketchly.data.repository.AuthRepository
+import com.jrprofessor.sketchly.data.repository.BlockRepository
 import com.jrprofessor.sketchly.data.repository.ContactRepository
 import com.jrprofessor.sketchly.data.repository.EditProfileRepository
 import com.jrprofessor.sketchly.data.repository.SketchlyRepository
@@ -105,4 +106,11 @@ object AppModule {
         firestore: FirebaseFirestore,
         storage: FirebaseStorage,
     ): EditProfileRepository = EditProfileRepository(auth, firestore, storage)
+
+    @Provides
+    @Singleton
+    fun provideBlockRepository(
+        firestore: FirebaseFirestore,
+        auth: FirebaseAuth,
+    ): BlockRepository = BlockRepository(firestore, auth)
 }

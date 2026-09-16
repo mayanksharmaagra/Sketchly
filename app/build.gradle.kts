@@ -101,6 +101,9 @@ dependencies {
     implementation(libs.hilt.work)
     ksp(libs.hilt.work.compiler)
 
+    // SMS User Consent API (auto-fetch OTP from SMS without READ_SMS permission)
+    implementation(libs.play.services.auth)
+
     // Testing
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))

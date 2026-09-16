@@ -1,5 +1,9 @@
 package com.jrprofessor.sketchly.ui.screens.auth
 
+import android.app.Activity
+import android.content.BroadcastReceiver
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -27,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -47,6 +52,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -65,6 +71,12 @@ import com.jrprofessor.sketchly.ui.theme.TextColor
 import com.jrprofessor.sketchly.ui.theme.TextEditorBgColor
 import com.jrprofessor.sketchly.ui.theme.TextEditorBorderColor
 import com.jrprofessor.sketchly.ui.theme.TextMuted
+import com.jrprofessor.sketchly.utils.createSmsReceiver
+import com.jrprofessor.sketchly.utils.extractOtpFromSms
+import com.jrprofessor.sketchly.utils.registerSmsReceiver
+import com.jrprofessor.sketchly.utils.startSmsUserConsent
+import com.jrprofessor.sketchly.utils.unregisterSmsReceiver
+import com.google.android.gms.auth.api.phone.SmsRetriever
 
 // ─────────────────────────────────────────────
 // Preview
@@ -114,9 +126,48 @@ fun OtpVerificationScreen(
     onDigitChanged: (index: Int, digit: String) -> Unit,
     onVerify: () -> Unit,
     onResend: () -> Unit,
+    /** Called with the 6-digit code extracted from the SMS — caller should fill + verify. */
+    onAutoFill: (code: String) -> Unit = {},
 ) {
+    val context = LocalContext.current
+    val activity = context as? Activity
+
+    // ── SMS User Consent wiring ──────────────────────────────────────────────
+    // Launcher for the system consent bottom-sheet (user taps "Allow" on the SMS)
+    val consentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val smsBody = result.data?.getStringExtra(SmsRetriever.EXTRA_SMS_MESSAGE) ?: return@rememberLauncherForActivityResult
+            val code = extractOtpFromSms(smsBody)
+            if (code != null) onAutoFill(code)
+        }
+    }
+
+    // Broadcast receiver that catches the SMS retriever event
+    val smsReceiver: BroadcastReceiver = remember {
+        createSmsReceiver(
+            onConsentNeeded = { intent -> consentLauncher.launch(intent) },
+            onCodeReceived = { code -> onAutoFill(code) },
+            onFailure = { /* silent — user can type manually */ },
+        )
+    }
+
+    // Register when the screen enters composition, unregister on exit
+    DisposableEffect(Unit) {
+        if (activity != null && uiState.isPhoneMode) {
+            registerSmsReceiver(context, smsReceiver)
+            startSmsUserConsent(activity)
+        }
+        onDispose {
+            if (activity != null && uiState.isPhoneMode) {
+                unregisterSmsReceiver(context, smsReceiver)
+            }
+        }
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
     val destination = if (uiState.isPhoneMode) {
-        val full = "${uiState.countryCode} ${uiState.phoneNumber}"
         maskPhone(uiState.countryCode, uiState.phoneNumber)
     } else {
         maskEmail(uiState.email)
