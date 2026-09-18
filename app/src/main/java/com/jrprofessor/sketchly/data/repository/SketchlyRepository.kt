@@ -1,5 +1,6 @@
 package com.jrprofessor.sketchly.data.repository
 
+import android.util.Log
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.NetworkType
@@ -109,17 +110,26 @@ class SketchlyRepository @Inject constructor(
 
     suspend fun getSketchById(id: String): Sketch? {
         val local = sketchDao.getById(id)
-        if (local != null) return entityToDomain(local)
+        if (local != null) {
+            Log.d("SketchlyRepository", "getSketchById($id) → Room hit")
+            return entityToDomain(local)
+        }
 
+        Log.d("SketchlyRepository", "getSketchById($id) → Room miss, fetching Firestore")
         // Try fetching remote if not in local Room
         return try {
             val doc = firestore.collection("scribbles").document(id).get().await()
             if (doc.exists()) {
+                Log.d("SketchlyRepository", "getSketchById($id) → Firestore hit, inserting to Room")
                 val entity = docToEntity(doc.data ?: emptyMap(), id)
                 sketchDao.insert(entity)
                 entityToDomain(entity)
-            } else null
+            } else {
+                Log.w("SketchlyRepository", "getSketchById($id) → Firestore doc does not exist")
+                null
+            }
         } catch (e: Exception) {
+            Log.e("SketchlyRepository", "getSketchById($id) → Firestore fetch failed", e)
             null
         }
     }
@@ -244,6 +254,7 @@ class SketchlyRepository @Inject constructor(
                     for (docChange in snapshots.documentChanges) {
                         val data = docChange.document.data
                         val id = docChange.document.id
+                        Log.e("TAG", "startListeningToInbox: "+ Gson().toJson(data) )
                         val entity = docToEntity(data, id)
 
                         val existing = sketchDao.getById(id)

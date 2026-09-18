@@ -47,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -55,6 +56,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import coil.compose.AsyncImage
 import com.jrprofessor.sketchly.data.model.Sketch
 import com.jrprofessor.sketchly.ui.components.SketchlyThumbnail
 import com.jrprofessor.sketchly.ui.components.SketchlyTopBar
@@ -93,6 +95,7 @@ fun ContactHistoryScreen(
     viewModel: ContactHistoryViewModel = hiltViewModel(),
 ) {
     val contactDisplayName by viewModel.contactDisplayName.collectAsStateWithLifecycle()
+    val contactAvatarUrl   by viewModel.contactAvatarUrl.collectAsStateWithLifecycle()
     val totalCount         by viewModel.totalCount.collectAsStateWithLifecycle()
     val sinceLabel         by viewModel.sinceLabel.collectAsStateWithLifecycle()
     val groupedSketches    by viewModel.groupedSketches.collectAsStateWithLifecycle()
@@ -150,6 +153,7 @@ fun ContactHistoryScreen(
             item(key = "hero") {
                 ContactHeroHeader(
                     contactDisplayName = contactDisplayName,
+                    contactAvatarUrl   = contactAvatarUrl,
                     totalCount         = totalCount,
                     sinceLabel         = sinceLabel,
                 )
@@ -255,6 +259,7 @@ fun ContactHistoryScreen(
 @Composable
 private fun ContactHeroHeader(
     contactDisplayName: String,
+    contactAvatarUrl: String?,
     totalCount: Int,
     sinceLabel: String,
 ) {
@@ -270,27 +275,41 @@ private fun ContactHeroHeader(
             .fillMaxWidth()
             .padding(top = 28.dp, bottom = 20.dp),
     ) {
-        // Large circular avatar — contact initials with coloured background
-        Surface(
-            shape           = CircleShape,
-            color           = avatarColor.copy(alpha = 0.15f),
-            shadowElevation = 4.dp,
-            modifier        = Modifier
-                .size(110.dp)
-                .border(2.dp, avatarColor.copy(alpha = 0.35f), CircleShape),
-        ) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier         = Modifier.fillMaxSize(),
+        // Large circular avatar — real photo if available, initials circle fallback
+        if (!contactAvatarUrl.isNullOrBlank()) {
+            // Real avatar image from Firestore
+            AsyncImage(
+                model = contactAvatarUrl,
+                contentDescription = "$contactDisplayName's avatar",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(110.dp)
+                    .clip(CircleShape)
+                    .border(2.dp, avatarColor.copy(alpha = 0.35f), CircleShape),
+            )
+        } else {
+            // Initials fallback
+            Surface(
+                shape           = CircleShape,
+                color           = avatarColor.copy(alpha = 0.15f),
+                shadowElevation = 4.dp,
+                modifier        = Modifier
+                    .size(110.dp)
+                    .border(2.dp, avatarColor.copy(alpha = 0.35f), CircleShape),
             ) {
-                Text(
-                    text  = initials,
-                    style = MaterialTheme.typography.headlineMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        fontSize   = 40.sp,
-                    ),
-                    color = avatarColor,
-                )
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier         = Modifier.fillMaxSize(),
+                ) {
+                    Text(
+                        text  = initials,
+                        style = MaterialTheme.typography.headlineMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize   = 40.sp,
+                        ),
+                        color = avatarColor,
+                    )
+                }
             }
         }
 

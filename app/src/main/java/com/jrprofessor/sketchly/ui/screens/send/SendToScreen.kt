@@ -564,7 +564,9 @@ private fun SentConfirmationDialog(
                             .clickable(
                                 indication = null,
                                 interactionSource = remember { MutableInteractionSource() },
-                            ) { onAddToWidget() },
+                            ) {
+                                onAddToWidget()
+                              },
                     ) {
                         Box(
                             contentAlignment = Alignment.Center,

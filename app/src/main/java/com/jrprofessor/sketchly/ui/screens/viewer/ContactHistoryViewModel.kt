@@ -3,15 +3,13 @@ package com.jrprofessor.sketchly.ui.screens.viewer
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.jrprofessor.sketchly.data.model.Sketch
+import com.jrprofessor.sketchly.data.repository.AuthRepository
 import com.jrprofessor.sketchly.data.repository.BlockRepository
 import com.jrprofessor.sketchly.data.repository.SketchlyRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -46,11 +44,19 @@ private fun weekLabel(createdAt: Long): String {
 class ContactHistoryViewModel @Inject constructor(
     private val sketchRepository: SketchlyRepository,
     private val blockRepository: BlockRepository,
+    private val authRepository: AuthRepository,
 ) : ViewModel() {
 
     /** Live display name of the contact being viewed */
     private val _contactDisplayName = MutableStateFlow("")
     val contactDisplayName: StateFlow<String> = _contactDisplayName.asStateFlow()
+
+    /**
+     * Avatar URL fetched from Firestore users/{contactId} — null means no avatar
+     * (show initials fallback).
+     */
+    private val _contactAvatarUrl = MutableStateFlow<String?>(null)
+    val contactAvatarUrl: StateFlow<String?> = _contactAvatarUrl.asStateFlow()
 
     /** Total count of sketches exchanged with this contact */
     private val _totalCount = MutableStateFlow(0)
@@ -68,6 +74,19 @@ class ContactHistoryViewModel @Inject constructor(
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
     fun load(contactId: String) {
+        // Fetch the live Firestore profile for this contact so the header always
+        // shows the up-to-date displayName and avatarUrl — not the potentially
+        // stale senderDisplayName stored on the scribble doc.
+        viewModelScope.launch {
+            val profile = authRepository.getUserProfile(contactId)
+            if (profile != null) {
+                if (profile.displayName.isNotBlank()) {
+                    _contactDisplayName.value = profile.displayName
+                }
+                _contactAvatarUrl.value = profile.avatarUrl.takeIf { it.isNotBlank() }
+            }
+        }
+
         viewModelScope.launch {
             sketchRepository.getSketchesWithContact(contactId).collect { sketches ->
                 if (sketches.isEmpty()) {
@@ -76,13 +95,16 @@ class ContactHistoryViewModel @Inject constructor(
                     return@collect
                 }
 
-                // Derive contact display name from received sketches (senderId == contactId)
-                val name = sketches
-                    .firstOrNull { it.senderId == contactId }
-                    ?.senderDisplayName
-                    ?.takeIf { it.isNotBlank() }
-                    ?: "Unknown"
-                _contactDisplayName.value = name
+                // Use Firestore profile name if already resolved; otherwise fall back to
+                // the name stored on the received scribble doc (senderId == contactId).
+                if (_contactDisplayName.value.isBlank()) {
+                    val fallbackName = sketches
+                        .firstOrNull { it.senderId == contactId }
+                        ?.senderDisplayName
+                        ?.takeIf { it.isNotBlank() }
+                        ?: "Unknown"
+                    _contactDisplayName.value = fallbackName
+                }
 
                 _totalCount.value = sketches.size
 

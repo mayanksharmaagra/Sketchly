@@ -1,5 +1,8 @@
 package com.jrprofessor.sketchly.ui.screens.viewer
 
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
+import android.os.Build
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -54,6 +57,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke as DrawStroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -557,6 +561,7 @@ fun ViewerScreenContent(
         }
 
         // ── "Set as Widget" button ────────────────────────────────────────────
+        val context = LocalContext.current
         androidx.compose.animation.AnimatedVisibility(
             visible = !uiState.isLoading && uiState.sketch != null,
             enter = fadeIn(),
@@ -583,7 +588,27 @@ fun ViewerScreenContent(
                             enabled = !uiState.widgetSetConfirmation,
                             indication = null,
                             interactionSource = remember { MutableInteractionSource() },
-                        ) { onAddToWidget() },
+                        ) {
+                            // Step 1: Request widget pin if the launcher supports it (API 26+).
+                            // This opens the system dialog so the user can place the widget
+                            // on the home screen. If the widget is already present the call
+                            // is a no-op on most launchers.
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                val appWidgetManager = AppWidgetManager.getInstance(context)
+                                val provider = ComponentName(
+                                    context,
+                                    com.jrprofessor.sketchly.widget.SketchlyWidgetReceiver::class.java,
+                                )
+                                if (appWidgetManager.isRequestPinAppWidgetSupported) {
+                                    appWidgetManager.requestPinAppWidget(provider, null, null)
+                                }
+                            }
+                            // Step 2: Schedule the WorkManager job that renders the sketch
+                            // bitmap into the widget state. This runs immediately and will
+                            // update any existing widget instances (including the one just
+                            // pinned once the launcher callback fires).
+                            onAddToWidget()
+                        },
                 ) {
                     Box(
                         contentAlignment = Alignment.Center,

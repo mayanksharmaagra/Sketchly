@@ -48,8 +48,10 @@ sealed class Screen(val route: String) {
     /** Send To — full-screen recipient picker */
     data object SendTo : Screen("send_to")
 
-    /** Add Widget — prompt to pin Sketchly widget to home screen */
-    data object AddWidget : Screen("add_widget")
+    /** Add Widget — prompt to pin Sketchly widget to home screen, previewing the sent scribble */
+    data object AddWidget : Screen("add_widget/{sketchId}") {
+        fun createRoute(sketchId: String) = "add_widget/$sketchId"
+    }
 
     /** Profile — user's profile card with stats */
     data object Profile : Screen("profile")

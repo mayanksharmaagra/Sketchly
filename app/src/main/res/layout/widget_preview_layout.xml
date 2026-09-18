@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Widget preview shown in the launcher widget picker (Android 12+ via previewLayout).
+    Mirrors the EmptyLayout state of SketchlyWidget: paper-ivory card with
+    a pencil emoji and "All caught up" label, plus the app name at the top.
+    Uses a classic View layout (not Glance/Compose).
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#F4F1DE"
+    android:gravity="center"
+    android:padding="16dp">
+
+    <!-- App name header -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        android:text="Sketchly"
+        android:textSize="11sp"
+        android:textStyle="bold"
+        android:textColor="#2C2C2C"
+        android:gravity="center"
+        android:alpha="0.7" />
+
+    <!-- Pencil emoji -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="✏️"
+        android:textSize="36sp"
+        android:gravity="center" />
+
+    <!-- "All caught up" label -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text="All caught up"
+        android:textSize="11sp"
+        android:textColor="#2C2C2C"
+        android:alpha="0.5"
+        android:gravity="center" />
+
+</LinearLayout>

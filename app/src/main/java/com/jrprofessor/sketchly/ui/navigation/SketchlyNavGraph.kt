@@ -148,25 +148,38 @@ fun SketchlyNavGraph(
                 onContactToggle = { drawViewModel.toggleContactSelection(it) },
                 onSendConfirmed = { drawViewModel.sendSketch() },
                 onBack = { navController.popBackStack() },
-                // "Maybe later" — skip widget, let user add it manually later
+                // Primary: "Add to Widget" gold button — navigate to AddWidgetScreen
+                // so the user sees the live scribble preview before pinning
                 onContinue = {
-                    drawViewModel.dismissSentDialog()
-                    navController.navigate(Screen.AddWidget.route) {
-                        popUpTo(Screen.Draw.route) { inclusive = false }
-                    }
-                },
-                // "Add to Widget" — schedule worker then go straight to Dashboard
-                onAddToWidget = {
-                    uiState.lastSentSketchId?.let { drawViewModel.scheduleWidgetUpdate(it) }
                     drawViewModel.dismissSentDialog()
                     navController.navigate(Screen.Dashboard.route) {
                         popUpTo(Screen.Draw.route) { inclusive = true }
                     }
                 },
+                // Secondary: "Maybe later" — skip AddWidgetScreen, go to Dashboard
+                onAddToWidget = {
+                    val sketchId = uiState.lastSentSketchId
+                    drawViewModel.dismissSentDialog()
+                    if (sketchId != null) {
+                        navController.navigate(Screen.AddWidget.createRoute(sketchId)) {
+                            popUpTo(Screen.Draw.route) { inclusive = false }
+                        }
+                    } else {
+                        navController.navigate(Screen.Dashboard.route) {
+                            popUpTo(Screen.Draw.route) { inclusive = true }
+                        }
+                    }
+
+                },
             )
         }
 
-        composable(Screen.AddWidget.route) {
+        composable(
+            route = Screen.AddWidget.route,
+            arguments = listOf(
+                navArgument("sketchId") { type = NavType.StringType },
+            ),
+        ) {
             AddWidgetScreen(
                 onAddWidget = {
                     navController.navigate(Screen.Dashboard.route) {

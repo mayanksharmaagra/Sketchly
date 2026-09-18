@@ -5,6 +5,12 @@
     targetCellWidth/targetCellHeight are the recommended sizes from Android 12+.
     updatePeriodMillis=0 because updates are fully push-driven via WorkManager + FCM.
     resizeMode allows both horizontal and vertical resize (handles 4×2 variant).
+
+    IMPORTANT: glance_default_loading_layout was removed in Glance 1.1.x.
+    We use our own widget_loading_layout as the initialLayout instead.
+
+    previewLayout (API 31+): shown in the widget picker on Android 12+ — renders a
+    real layout, not a static image. Falls back to previewImage on older launchers.
 -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:minWidth="110dp"
@@ -14,7 +20,10 @@
     android:maxResizeWidth="250dp"
     android:maxResizeHeight="110dp"
     android:updatePeriodMillis="0"
-    android:initialLayout="@layout/glance_default_loading_layout"
+    android:initialLayout="@layout/widget_loading_layout"
+    android:previewLayout="@layout/widget_preview_layout"
+    android:previewImage="@drawable/widget_preview"
     android:resizeMode="horizontal|vertical"
     android:widgetCategory="home_screen"
     android:description="@string/widget_description" />
+

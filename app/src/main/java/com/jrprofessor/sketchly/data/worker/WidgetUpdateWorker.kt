@@ -5,13 +5,13 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
+import android.util.Log
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.state.updateAppWidgetState
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import com.google.firebase.auth.FirebaseAuth
 import com.jrprofessor.sketchly.data.model.DrawPoint
 import com.jrprofessor.sketchly.data.model.Stroke
 import com.jrprofessor.sketchly.data.model.hexToColor
@@ -40,28 +40,49 @@ class WidgetUpdateWorker @AssistedInject constructor(
 ) : CoroutineWorker(context, workerParams) {
 
     override suspend fun doWork(): Result {
-        val sketchId = inputData.getString(KEY_SKETCH_ID) ?: return Result.failure()
+        val sketchId = inputData.getString(KEY_SKETCH_ID)
+        Log.d(TAG, "doWork() start — sketchId=$sketchId attempt=$runAttemptCount")
+
+        if (sketchId == null) {
+            Log.e(TAG, "doWork() aborted — no sketchId in input data")
+            return Result.failure()
+        }
 
         return withContext(Dispatchers.IO) {
             try {
                 // 1. Fetch Sketch (Room-first, Firestore fallback)
-                val sketch = repository.getSketchById(sketchId) ?: return@withContext Result.failure()
+                val sketch = repository.getSketchById(sketchId)
+                if (sketch == null) {
+                    Log.e(TAG, "doWork() — sketch $sketchId not found in Room or Firestore, retrying")
+                    return@withContext if (runAttemptCount < 3) Result.retry() else Result.failure()
+                }
+                Log.d(TAG, "doWork() — sketch fetched: sender=${sketch.senderId}, strokes=${sketch.strokes.size}")
 
                 // 2. Render strokes to bitmap
                 val bitmap = renderStrokesToBitmap(sketch.strokes, sketch.backgroundColor)
+                Log.d(TAG, "doWork() — bitmap rendered ${bitmap.width}x${bitmap.height}")
 
                 // 3. Write bitmap to local file
                 val bitmapFile = File(context.filesDir, WIDGET_BITMAP_FILENAME)
                 FileOutputStream(bitmapFile).use { out ->
                     bitmap.compress(Bitmap.CompressFormat.PNG, 90, out)
                 }
+                Log.d(TAG, "doWork() — bitmap saved to ${bitmapFile.absolutePath}")
 
-                // 4. Resolve sender display name (best-effort — falls back to uid)
-                val senderName = resolveSenderName(sketch.senderId)
+                // 4. Resolve sender display name — senderDisplayName is stored on the
+                //    scribble doc at send time, so it is available here without an
+                //    extra Firestore lookup.
+                val senderName = sketch.senderDisplayName.ifBlank { "Someone" }
 
                 // 5. Update Glance widget state via PreferencesGlanceStateDefinition
                 val manager = GlanceAppWidgetManager(context)
                 val glanceIds = manager.getGlanceIds(SketchlyWidget::class.java)
+                Log.d(TAG, "doWork() — glanceIds count=${glanceIds.size}")
+
+                if (glanceIds.isEmpty()) {
+                    Log.w(TAG, "doWork() — no widget placed on home screen, nothing to update")
+                    return@withContext Result.success() // not an error — widget simply not pinned
+                }
 
                 for (glanceId in glanceIds) {
                     updateAppWidgetState(context, glanceId) { prefs ->
@@ -73,10 +94,12 @@ class WidgetUpdateWorker @AssistedInject constructor(
                         }
                     }
                     SketchlyWidget().update(context, glanceId)
+                    Log.d(TAG, "doWork() — widget updated glanceId=$glanceId sender=$senderName")
                 }
 
                 Result.success()
             } catch (e: Exception) {
+                Log.e(TAG, "doWork() — unexpected error (attempt=$runAttemptCount)", e)
                 if (runAttemptCount < 3) Result.retry() else Result.failure()
             }
         }
@@ -138,14 +161,6 @@ class WidgetUpdateWorker @AssistedInject constructor(
         return bitmap
     }
 
-    private fun resolveSenderName(senderId: String): String {
-        val currentUser = FirebaseAuth.getInstance().currentUser
-        return if (currentUser?.uid == senderId) {
-            currentUser.displayName ?: "You"
-        } else {
-            "Someone"
-        }
-    }
 
     private fun formatRelativeTime(createdAtMs: Long): String {
         val diffMs = System.currentTimeMillis() - createdAtMs
@@ -158,6 +173,7 @@ class WidgetUpdateWorker @AssistedInject constructor(
     }
 
     companion object {
+        private const val TAG = "WidgetUpdateWorker"
         const val KEY_SKETCH_ID = "key_sketch_id"
         const val WIDGET_BITMAP_FILENAME = "widget_preview.png"
         private const val BITMAP_SIZE_PX = 512

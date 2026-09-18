@@ -3,7 +3,8 @@ package com.jrprofessor.sketchly.ui.screens.widget
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.os.Build
-import androidx.compose.foundation.Canvas
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -22,350 +23,290 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Widgets
+import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.RoundRect
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.jrprofessor.sketchly.data.model.hexToColor
+import com.jrprofessor.sketchly.ui.components.SketchlyThumbnail
 import com.jrprofessor.sketchly.ui.theme.AppNameColor
 import com.jrprofessor.sketchly.ui.theme.BgColor
 import com.jrprofessor.sketchly.ui.theme.ButtonGold
 import com.jrprofessor.sketchly.ui.theme.PaperIvory
 import com.jrprofessor.sketchly.ui.theme.PillShape
-import com.jrprofessor.sketchly.ui.theme.SketchlyTheme
-import com.jrprofessor.sketchly.ui.theme.TextEditorBorderColor
 import com.jrprofessor.sketchly.ui.theme.TextMuted
 import com.jrprofessor.sketchly.widget.SketchlyWidgetReceiver
+import kotlinx.coroutines.delay
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddWidgetScreen(
     onAddWidget: () -> Unit,
     onSkip: () -> Unit,
+    viewModel: AddWidgetViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
+    // Bottom sheet — open automatically after a short delay so the user sees the preview first
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var showSheet by remember { mutableStateOf(false) }
+
+    LaunchedEffect(uiState.isLoading) {
+        if (!uiState.isLoading) {
+            delay(400) // brief moment to see the sketch before sheet slides up
+            showSheet = true
+        }
+    }
+
+    // Resolve background color from hex
+    val bgColor = remember(uiState.backgroundColor) {
+        runCatching { hexToColor(uiState.backgroundColor) }.getOrDefault(PaperIvory)
+    }
+
+    // ── Main screen — the scribble fills the whole screen ──────────────────
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(BgColor),
     ) {
+        // ── Header label ────────────────────────────────────────────────────
         Column(
             modifier = Modifier
-                .fillMaxSize()
+                .fillMaxWidth()
                 .statusBarsPadding()
-                .navigationBarsPadding()
-                .padding(horizontal = 32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
+                .padding(horizontal = 24.dp, vertical = 16.dp),
         ) {
-            Spacer(modifier = Modifier.weight(0.5f))
-
-            // ── Phone mockup illustration ──────────────────────────────────────
-            PhoneMockupIllustration(
-                modifier = Modifier
-                    .fillMaxWidth(0.72f)
-                    .height(340.dp),
-            )
-
-            Spacer(modifier = Modifier.height(40.dp))
-
-            // ── Heading ────────────────────────────────────────────────────────
             Text(
-                text = "Add Scribble to your\nHome Screen",
-                style = MaterialTheme.typography.headlineMedium.copy(
+                text = "Add to Widget",
+                style = MaterialTheme.typography.titleLarge.copy(
                     fontWeight = FontWeight.Bold,
                     fontStyle = FontStyle.Italic,
-                    fontSize = 26.sp,
-                    lineHeight = 34.sp,
+                    fontSize = 22.sp,
                 ),
                 color = AppNameColor,
-                textAlign = TextAlign.Center,
             )
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // ── Subtitle ───────────────────────────────────────────────────────
             Text(
-                text = "See notes from friends instantly\nwithout opening the app.",
-                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
+                text = "Preview how it'll look on your home screen",
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
                 color = TextMuted,
-                textAlign = TextAlign.Center,
             )
+        }
 
-            Spacer(modifier = Modifier.weight(0.5f))
-
-            // ── Add Widget button ──────────────────────────────────────────────
-            Surface(
-                shape = PillShape,
-                color = ButtonGold,
-                shadowElevation = 6.dp,
+        // ── Widget card preview — centred in the remaining space ────────────
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = 100.dp, bottom = 280.dp, start = 24.dp, end = 24.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            // Outer phone-like card with shadow
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp)
-                    .clip(PillShape)
-                    .clickable(
-                        indication = null,
-                        interactionSource = remember { MutableInteractionSource() },
-                    ) {
-                        // Request widget pin (Android 8.0+)
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            val appWidgetManager = AppWidgetManager.getInstance(context)
-                            val provider = ComponentName(context, SketchlyWidgetReceiver::class.java)
-                            if (appWidgetManager.isRequestPinAppWidgetSupported) {
-                                appWidgetManager.requestPinAppWidget(provider, null, null)
-                            }
-                        }
-                        onAddWidget()
-                    },
-            ) {
-                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                    Text(
-                        text = "Add Widget",
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp,
-                        ),
-                        color = Color.White,
+                    .shadow(
+                        elevation = 20.dp,
+                        shape = RoundedCornerShape(28.dp),
+                        ambientColor = AppNameColor.copy(alpha = 0.12f),
+                        spotColor = AppNameColor.copy(alpha = 0.20f),
                     )
+                    .clip(RoundedCornerShape(28.dp))
+                    .background(bgColor)
+                    .fillMaxWidth()
+                    .height(340.dp),
+            ) {
+                if (uiState.isLoading) {
+                    // Skeleton placeholder
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(
+                                        bgColor.copy(alpha = 0.6f),
+                                        bgColor,
+                                    ),
+                                ),
+                            ),
+                    )
+                } else {
+                    // Real sketch rendered with the same canvas used in Viewer/Thumbnail
+                    SketchlyThumbnail(
+                        strokes = uiState.strokes,
+                        backgroundColor = bgColor,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+
+                    // Subtle "WIDGET PREVIEW" stamp badge at top-right
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(12.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(AppNameColor.copy(alpha = 0.08f))
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Rounded.Widgets,
+                                contentDescription = null,
+                                tint = AppNameColor.copy(alpha = 0.55f),
+                                modifier = Modifier.size(12.dp),
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = "WIDGET PREVIEW",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 9.sp,
+                                    letterSpacing = 0.8.sp,
+                                ),
+                                color = AppNameColor.copy(alpha = 0.55f),
+                            )
+                        }
+                    }
                 }
             }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // ── Maybe later ────────────────────────────────────────────────────
-            Text(
-                text = "Maybe later",
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 15.sp,
-                ),
-                color = TextMuted,
-                modifier = Modifier
-                    .clickable(
-                        indication = null,
-                        interactionSource = remember { MutableInteractionSource() },
-                    ) { onSkip() }
-                    .padding(vertical = 8.dp, horizontal = 16.dp),
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
         }
     }
-}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Phone Mockup — drawn with Canvas to show the widget on a home screen
-// ─────────────────────────────────────────────────────────────────────────────
+    // ── Bottom sheet ────────────────────────────────────────────────────────
+    if (showSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { /* prevent accidental dismissal — user must tap a button */ },
+            sheetState = sheetState,
+            containerColor = BgColor,
+            dragHandle = { BottomSheetDefaults.DragHandle(color = TextMuted.copy(alpha = 0.4f)) },
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 28.dp)
+                    .padding(bottom = 28.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                // Widget icon badge
+                Box(
+                    modifier = Modifier
+                        .size(60.dp)
+                        .clip(CircleShape)
+                        .background(ButtonGold.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Widgets,
+                        contentDescription = null,
+                        tint = ButtonGold,
+                        modifier = Modifier.size(30.dp),
+                    )
+                }
 
-@Composable
-private fun PhoneMockupIllustration(modifier: Modifier = Modifier) {
-    val bgColor = BgColor
-    val phoneBodyColor = Color(0xFFE8E0CC)
-    val screenColor = Color(0xFFF0EAD8)
-    val appIconColor = phoneBodyColor.copy(alpha = 0.7f)
-    val widgetBg = PaperIvory
-    val widgetSketchColor = AppNameColor.copy(alpha = 0.55f)
-    val avatarColor = Color(0xFF70A18A)
-    val strokeColor = AppNameColor
+                Spacer(Modifier.height(16.dp))
 
-    Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
+                Text(
+                    text = "Add Scribble to\nHome Screen",
+                    style = MaterialTheme.typography.headlineSmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontStyle = FontStyle.Italic,
+                        lineHeight = 30.sp,
+                    ),
+                    color = AppNameColor,
+                    textAlign = TextAlign.Center,
+                )
 
-        val phoneCorner = w * 0.12f
-        val phoneLeft = 0f
-        val phoneTop = h * 0.04f
-        val phoneRight = w
-        val phoneBottom = h * 0.96f
+                Spacer(Modifier.height(8.dp))
 
-        // Phone body shadow
-        drawRoundRect(
-            color = AppNameColor.copy(alpha = 0.08f),
-            topLeft = Offset(phoneLeft + 6f, phoneTop + 6f),
-            size = Size(phoneRight - phoneLeft, phoneBottom - phoneTop),
-            cornerRadius = CornerRadius(phoneCorner),
-        )
+                Text(
+                    text = "See notes from friends instantly\nwithout opening the app.",
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                    color = TextMuted,
+                    textAlign = TextAlign.Center,
+                )
 
-        // Phone body
-        drawRoundRect(
-            color = phoneBodyColor,
-            topLeft = Offset(phoneLeft, phoneTop),
-            size = Size(phoneRight - phoneLeft, phoneBottom - phoneTop),
-            cornerRadius = CornerRadius(phoneCorner),
-        )
+                Spacer(Modifier.height(28.dp))
 
-        // Screen
-        val screenPad = w * 0.06f
-        val screenTop = phoneTop + h * 0.06f
-        val screenBottom = phoneBottom - h * 0.05f
-        drawRoundRect(
-            color = screenColor,
-            topLeft = Offset(phoneLeft + screenPad, screenTop),
-            size = Size(phoneRight - phoneLeft - screenPad * 2, screenBottom - screenTop),
-            cornerRadius = CornerRadius(w * 0.07f),
-        )
+                // ── Set as Widget button ─────────────────────────────────
+                Surface(
+                    shape = PillShape,
+                    color = ButtonGold,
+                    shadowElevation = 6.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(54.dp)
+                        .clip(PillShape)
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() },
+                        ) {
+                            // 1. Schedule the worker so the widget state is written
+                            viewModel.scheduleWidgetUpdate()
+                            // 2. Request pin (Android 8+)
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                val awm = AppWidgetManager.getInstance(context)
+                                val provider = ComponentName(context, SketchlyWidgetReceiver::class.java)
+                                if (awm.isRequestPinAppWidgetSupported) {
+                                    awm.requestPinAppWidget(provider, null, null)
+                                }
+                            }
+                            onAddWidget()
+                        },
+                ) {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                        Text(
+                            text = "Set as Widget 📌",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp,
+                            ),
+                            color = Color.White,
+                        )
+                    }
+                }
 
-        // Status bar dots
-        val sbY = screenTop + h * 0.025f
-        val sbLeft = phoneLeft + screenPad + w * 0.06f
-        drawCircle(color = strokeColor.copy(alpha = 0.3f), radius = w * 0.012f, center = Offset(w / 2f, sbY))
+                Spacer(Modifier.height(16.dp))
 
-        // App icons row 1 (top row, 4 icons)
-        val iconSize = w * 0.10f
-        val iconY1 = screenTop + h * 0.06f
-        val iconSpacing = (phoneRight - phoneLeft - screenPad * 2 - iconSize * 4) / 5f
-        for (i in 0..3) {
-            val iconX = phoneLeft + screenPad + iconSpacing + i * (iconSize + iconSpacing)
-            drawRoundRect(
-                color = appIconColor,
-                topLeft = Offset(iconX, iconY1),
-                size = Size(iconSize, iconSize),
-                cornerRadius = CornerRadius(iconSize * 0.28f),
-            )
-        }
-
-        // ── Widget card ─────────────────────────────────────────────────────
-        val widgetTop = iconY1 + iconSize + h * 0.03f
-        val widgetLeft = phoneLeft + screenPad + w * 0.03f
-        val widgetRight = phoneRight - screenPad - w * 0.03f
-        val widgetBottom = widgetTop + h * 0.32f
-        val widgetCorner = w * 0.06f
-
-        // Widget shadow
-        drawRoundRect(
-            color = AppNameColor.copy(alpha = 0.06f),
-            topLeft = Offset(widgetLeft + 3f, widgetTop + 3f),
-            size = Size(widgetRight - widgetLeft, widgetBottom - widgetTop),
-            cornerRadius = CornerRadius(widgetCorner),
-        )
-
-        // Widget background
-        drawRoundRect(
-            color = widgetBg,
-            topLeft = Offset(widgetLeft, widgetTop),
-            size = Size(widgetRight - widgetLeft, widgetBottom - widgetTop),
-            cornerRadius = CornerRadius(widgetCorner),
-        )
-
-        // Widget header: avatar + "From Sarah"
-        val headerY = widgetTop + h * 0.025f
-        val avatarR = w * 0.055f
-        val avatarCx = widgetLeft + w * 0.08f
-        val avatarCy = headerY + avatarR
-        drawCircle(color = avatarColor, radius = avatarR, center = Offset(avatarCx, avatarCy))
-
-        // "From Sarah" text rendered as a thick line placeholder
-        drawRoundRect(
-            color = strokeColor.copy(alpha = 0.22f),
-            topLeft = Offset(avatarCx + avatarR + w * 0.03f, avatarCy - w * 0.025f),
-            size = Size(w * 0.28f, w * 0.04f),
-            cornerRadius = CornerRadius(w * 0.02f),
-        )
-
-        // Sketch area inside widget
-        val sketchLeft = widgetLeft + w * 0.04f
-        val sketchTop2 = headerY + avatarR * 2f + h * 0.015f
-        val sketchRight2 = widgetRight - w * 0.04f
-        val sketchBottom2 = widgetBottom - h * 0.015f
-
-        drawRoundRect(
-            color = Color(0xFFF5F0E0),
-            topLeft = Offset(sketchLeft, sketchTop2),
-            size = Size(sketchRight2 - sketchLeft, sketchBottom2 - sketchTop2),
-            cornerRadius = CornerRadius(w * 0.04f),
-        )
-
-        // Draw a simple teacup doodle inside the sketch area
-        val cx = (sketchLeft + sketchRight2) / 2f
-        val cy = (sketchTop2 + sketchBottom2) / 2f + h * 0.01f
-        val cupStroke = Stroke(width = w * 0.018f, cap = StrokeCap.Round)
-
-        // Cup body
-        val cupW = w * 0.18f
-        val cupH = w * 0.12f
-        val path = Path().apply {
-            moveTo(cx - cupW / 2f, cy - cupH / 2f)
-            lineTo(cx - cupW * 0.4f, cy + cupH / 2f)
-            lineTo(cx + cupW * 0.4f, cy + cupH / 2f)
-            lineTo(cx + cupW / 2f, cy - cupH / 2f)
-        }
-        drawPath(path, color = widgetSketchColor, style = cupStroke)
-
-        // Cup handle
-        val handlePath = Path().apply {
-            moveTo(cx + cupW * 0.4f, cy - cupH * 0.1f)
-            cubicTo(
-                cx + cupW * 0.7f, cy - cupH * 0.1f,
-                cx + cupW * 0.7f, cy + cupH * 0.4f,
-                cx + cupW * 0.4f, cy + cupH * 0.4f,
-            )
-        }
-        drawPath(handlePath, color = widgetSketchColor, style = cupStroke)
-
-        // Saucer line
-        drawLine(
-            color = widgetSketchColor,
-            start = Offset(cx - cupW * 0.55f, cy + cupH / 2f + w * 0.015f),
-            end = Offset(cx + cupW * 0.55f, cy + cupH / 2f + w * 0.015f),
-            strokeWidth = w * 0.016f,
-            cap = StrokeCap.Round,
-        )
-
-        // Steam wisps
-        for (i in -1..1) {
-            val steamX = cx + i * cupW * 0.22f
-            val steamPath = Path().apply {
-                moveTo(steamX, cy - cupH / 2f - w * 0.02f)
-                cubicTo(
-                    steamX - w * 0.02f, cy - cupH / 2f - w * 0.06f,
-                    steamX + w * 0.02f, cy - cupH / 2f - w * 0.10f,
-                    steamX, cy - cupH / 2f - w * 0.14f,
+                // ── Maybe later ──────────────────────────────────────────
+                Text(
+                    text = "Maybe later",
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 15.sp,
+                    ),
+                    color = TextMuted,
+                    modifier = Modifier
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() },
+                        ) { onSkip() }
+                        .padding(vertical = 8.dp, horizontal = 20.dp),
                 )
             }
-            drawPath(steamPath, color = widgetSketchColor.copy(alpha = 0.55f), style = Stroke(width = w * 0.012f, cap = StrokeCap.Round))
         }
-
-        // App icons row 2 (below widget)
-        val iconY2 = widgetBottom + h * 0.03f
-        for (i in 0..3) {
-            val iconX = phoneLeft + screenPad + iconSpacing + i * (iconSize + iconSpacing)
-            drawRoundRect(
-                color = appIconColor,
-                topLeft = Offset(iconX, iconY2),
-                size = Size(iconSize, iconSize),
-                cornerRadius = CornerRadius(iconSize * 0.28f),
-            )
-        }
-    }
-}
-
-// ── Previews ──
-
-@Preview(name = "AddWidget Screen", showBackground = true)
-@Composable
-private fun AddWidgetScreenPreview() {
-    SketchlyTheme {
-        AddWidgetScreen(
-            onAddWidget = {},
-            onSkip = {},
-        )
     }
 }
