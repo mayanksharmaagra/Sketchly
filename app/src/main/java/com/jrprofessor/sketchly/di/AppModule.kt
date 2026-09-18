@@ -84,10 +84,11 @@ object AppModule {
     @Provides
     @Singleton
     fun provideSketchlyRepository(
+        @ApplicationContext context: Context,
         sketchDao: SketchlyDao,
         firestore: FirebaseFirestore,
         workManager: WorkManager,
-    ): SketchlyRepository = SketchlyRepository(sketchDao, firestore, workManager)
+    ): SketchlyRepository = SketchlyRepository(context, sketchDao, firestore, workManager)
 
     @Provides
     @Singleton

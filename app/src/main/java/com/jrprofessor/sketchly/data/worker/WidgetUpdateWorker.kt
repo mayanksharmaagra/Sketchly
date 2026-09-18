@@ -31,6 +31,37 @@ import java.util.concurrent.TimeUnit
 /**
  * WorkManager CoroutineWorker responsible for the widget refresh pipeline (Architecture §4, step 5).
  * Uses @HiltWorker so Hilt can inject its dependencies via HiltWorkerFactory.
+ *
+ * ─── MANUAL QA CHECKLIST ─────────────────────────────────────────────────────
+ * Use this checklist every time the widget update pipeline is being verified:
+ *
+ * 1. CONFIRM widget is pinned on the TEST device (User B's device) BEFORE
+ *    sending a Scribble.  The Settings screen shows a debug row:
+ *    "Widget status: Pinned ✅ / Not added ❌" (BuildConfig.DEBUG only).
+ *
+ * 2. From a second account / device (User A), send a Scribble to User B.
+ *
+ * 3. Filter logcat on User B's device:
+ *       adb logcat | grep WidgetUpdate
+ *
+ * 4. Confirm the full step sequence appears in order:
+ *       [WidgetUpdate] step=start
+ *       [WidgetUpdate] step=sketch_fetched
+ *       [WidgetUpdate] step=bitmap_rendered
+ *       [WidgetUpdate] step=bitmap_saved
+ *       [WidgetUpdate] step=glance_ids_resolved   count=N (N ≥ 1 if widget is pinned)
+ *       [WidgetUpdate] step=widget_updated        (once per glanceId)
+ *
+ * 5. If step=no_widget_pinned appears instead of step=widget_updated, the
+ *    FCM → Worker pipeline is functioning correctly.  The widget simply was
+ *    not added to the home screen — this is NOT a code bug.
+ *
+ * 6. If step=sketch_not_found appears on attempt=0, check logcat for
+ *    SketchlyRepository — a "Room miss, fetching Firestore" immediately
+ *    followed by "Firestore doc does not exist" on the first attempt means
+ *    the 1-second initial delay is too short.  Increase to 2 seconds in
+ *    enqueueWidgetUpdate() only if this is reproducible.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 @HiltWorker
 class WidgetUpdateWorker @AssistedInject constructor(
@@ -41,10 +72,10 @@ class WidgetUpdateWorker @AssistedInject constructor(
 
     override suspend fun doWork(): Result {
         val sketchId = inputData.getString(KEY_SKETCH_ID)
-        Log.d(TAG, "doWork() start — sketchId=$sketchId attempt=$runAttemptCount")
+        Log.d(TAG, "[WidgetUpdate] step=start sketchId=$sketchId attempt=$runAttemptCount")
 
         if (sketchId == null) {
-            Log.e(TAG, "doWork() aborted — no sketchId in input data")
+            Log.e(TAG, "[WidgetUpdate] step=aborted reason=missing_sketch_id")
             return Result.failure()
         }
 
@@ -53,35 +84,45 @@ class WidgetUpdateWorker @AssistedInject constructor(
                 // 1. Fetch Sketch (Room-first, Firestore fallback)
                 val sketch = repository.getSketchById(sketchId)
                 if (sketch == null) {
-                    Log.e(TAG, "doWork() — sketch $sketchId not found in Room or Firestore, retrying")
+                    Log.e(
+                        TAG,
+                        "[WidgetUpdate] step=sketch_not_found sketchId=$sketchId attempt=$runAttemptCount — scheduling retry",
+                    )
                     return@withContext if (runAttemptCount < 3) Result.retry() else Result.failure()
                 }
-                Log.d(TAG, "doWork() — sketch fetched: sender=${sketch.senderId}, strokes=${sketch.strokes.size}")
+                Log.d(
+                    TAG,
+                    "[WidgetUpdate] step=sketch_fetched sender=${sketch.senderId} strokes=${sketch.strokes.size}",
+                )
 
                 // 2. Render strokes to bitmap
                 val bitmap = renderStrokesToBitmap(sketch.strokes, sketch.backgroundColor)
-                Log.d(TAG, "doWork() — bitmap rendered ${bitmap.width}x${bitmap.height}")
+                Log.d(TAG, "[WidgetUpdate] step=bitmap_rendered size=${bitmap.width}x${bitmap.height}")
 
                 // 3. Write bitmap to local file
                 val bitmapFile = File(context.filesDir, WIDGET_BITMAP_FILENAME)
                 FileOutputStream(bitmapFile).use { out ->
                     bitmap.compress(Bitmap.CompressFormat.PNG, 90, out)
                 }
-                Log.d(TAG, "doWork() — bitmap saved to ${bitmapFile.absolutePath}")
+                Log.d(TAG, "[WidgetUpdate] step=bitmap_saved path=${bitmapFile.absolutePath}")
 
                 // 4. Resolve sender display name — senderDisplayName is stored on the
                 //    scribble doc at send time, so it is available here without an
                 //    extra Firestore lookup.
                 val senderName = sketch.senderDisplayName.ifBlank { "Someone" }
 
-                // 5. Update Glance widget state via PreferencesGlanceStateDefinition
+                // 5. Resolve Glance widget instances pinned on the home screen.
+                //    GlanceAppWidgetManager.getGlanceIds() returns an empty list when
+                //    the widget has never been pinned — this is NOT an error.
                 val manager = GlanceAppWidgetManager(context)
                 val glanceIds = manager.getGlanceIds(SketchlyWidget::class.java)
-                Log.d(TAG, "doWork() — glanceIds count=${glanceIds.size}")
+                Log.d(TAG, "[WidgetUpdate] step=glance_ids_resolved count=${glanceIds.size}")
 
                 if (glanceIds.isEmpty()) {
-                    Log.w(TAG, "doWork() — no widget placed on home screen, nothing to update")
-                    return@withContext Result.success() // not an error — widget simply not pinned
+                    // Widget not pinned — pipeline is healthy, nothing to render.
+                    // See QA checklist at top of file.
+                    Log.w(TAG, "[WidgetUpdate] step=no_widget_pinned — aborting, this is not an error")
+                    return@withContext Result.success()
                 }
 
                 for (glanceId in glanceIds) {
@@ -94,12 +135,13 @@ class WidgetUpdateWorker @AssistedInject constructor(
                         }
                     }
                     SketchlyWidget().update(context, glanceId)
-                    Log.d(TAG, "doWork() — widget updated glanceId=$glanceId sender=$senderName")
+                    Log.d(TAG, "[WidgetUpdate] step=widget_updated glanceId=$glanceId sender=$senderName")
                 }
 
+                Log.d(TAG, "[WidgetUpdate] step=complete sketchId=$sketchId updatedWidgets=${glanceIds.size}")
                 Result.success()
             } catch (e: Exception) {
-                Log.e(TAG, "doWork() — unexpected error (attempt=$runAttemptCount)", e)
+                Log.e(TAG, "[WidgetUpdate] step=error attempt=$runAttemptCount", e)
                 if (runAttemptCount < 3) Result.retry() else Result.failure()
             }
         }
@@ -176,6 +218,15 @@ class WidgetUpdateWorker @AssistedInject constructor(
         private const val TAG = "WidgetUpdateWorker"
         const val KEY_SKETCH_ID = "key_sketch_id"
         const val WIDGET_BITMAP_FILENAME = "widget_preview.png"
-        private const val BITMAP_SIZE_PX = 512
+        //
+        // BITMAP_SIZE_PX = 240  (was 512).
+        // A 512×512 ARGB_8888 bitmap is 1,048,576 bytes — Android’s Binder IPC
+        // limit is also ~1 MB.  With RemoteViews frame overhead on top, the call
+        // to setImageViewBitmap() silently fails and the widget stays blank even
+        // though WorkManager reports SUCCESS.
+        // At 240×240: 240*240*4 = 230,400 bytes (~225 KB) — well within limits.
+        // Do NOT increase above 350 without validating on low-memory devices.
+        //
+        private const val BITMAP_SIZE_PX = 240
     }
 }

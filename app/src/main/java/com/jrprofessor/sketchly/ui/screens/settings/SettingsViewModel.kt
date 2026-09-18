@@ -9,6 +9,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.google.firebase.auth.FirebaseUser
+import com.jrprofessor.sketchly.BuildConfig
 import com.jrprofessor.sketchly.data.model.User
 import com.jrprofessor.sketchly.data.repository.AuthRepository
 import com.jrprofessor.sketchly.data.repository.ContactRepository
@@ -76,6 +77,32 @@ class SettingsViewModel @Inject constructor(
     /** Unique senders (proxy for friends) — shown in the Profile stats row. */
     val friendsCount: StateFlow<Int> = sketchlyRepository.getUniqueSenderCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    // ── Widget pin status (DEBUG only) ────────────────────────────────────────
+    //
+    // Exposes a live pin-status flag so the Settings screen can show a
+    // "Widget status: Pinned ✅ / Not added ❌" row during manual QA.
+    // The StateFlow is backed by GlanceAppWidgetManager and refreshed every
+    // time refreshWidgetPinStatus() is called (typically on screen resume).
+    // Gated on BuildConfig.DEBUG — in release builds this state is never
+    // updated and the corresponding UI row is compiled out entirely.
+    // ─────────────────────────────────────────────────────────────────────────
+    private val _isWidgetPinned = MutableStateFlow(false)
+    val isWidgetPinned: StateFlow<Boolean> = _isWidgetPinned.asStateFlow()
+
+    /**
+     * Refreshes the [isWidgetPinned] state by querying [GlanceAppWidgetManager].
+     * Call this from the Settings screen's [LaunchedEffect] so the badge
+     * reflects reality after the user returns from pinning the widget.
+     *
+     * No-op in release builds (guarded by [BuildConfig.DEBUG]).
+     */
+    fun refreshWidgetPinStatus() {
+        if (!BuildConfig.DEBUG) return
+        viewModelScope.launch {
+            _isWidgetPinned.value = sketchlyRepository.isWidgetPinned()
+        }
+    }
 
     /**
      * Enables periodic contact sync every 24 hours using WorkManager

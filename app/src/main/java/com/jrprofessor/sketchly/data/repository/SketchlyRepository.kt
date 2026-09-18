@@ -1,6 +1,8 @@
 package com.jrprofessor.sketchly.data.repository
 
+import android.content.Context
 import android.util.Log
+import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.NetworkType
@@ -41,6 +43,7 @@ sealed class HistoryFilter {
 
 @Singleton
 class SketchlyRepository @Inject constructor(
+    @param:dagger.hilt.android.qualifiers.ApplicationContext private val appContext: Context,
     private val sketchDao: SketchlyDao,
     private val firestore: FirebaseFirestore,
     private val workManager: WorkManager,
@@ -56,7 +59,23 @@ class SketchlyRepository @Inject constructor(
         const val PAGE_SIZE = 20
     }
 
-    // ── Local Room Flows ──
+    /**
+     * Returns true if at least one instance of [SketchlyWidget] is currently
+     * pinned on the device's home screen.
+     *
+     * This is the authoritative check used by the debug status row in
+     * SettingsScreen (BuildConfig.DEBUG only) so QA can confirm widget presence
+     * without needing to inspect logcat.
+     *
+     * Implementation note: [GlanceAppWidgetManager.getGlanceIds] is a suspend
+     * function internally and must be called on a coroutine — it is safe to call
+     * from any dispatcher.
+     */
+    suspend fun isWidgetPinned(): Boolean =
+        GlanceAppWidgetManager(appContext)
+            .getGlanceIds(com.jrprofessor.sketchly.widget.SketchlyWidget::class.java)
+            .isNotEmpty()
+
 
     fun getInboxSketches(): Flow<List<Sketch>> {
         return sketchDao.getInboxSketches().map { entities ->

@@ -1,7 +1,9 @@
 package com.jrprofessor.sketchly.widget
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.DpSize
@@ -69,6 +71,8 @@ class SketchlyWidget : GlanceAppWidget() {
         private val PaperIvory = Color(0xFFF4F1DE)
         private val InkDark = Color(0xFF2C2C2C)
         private val AccentOrange = Color(0xFFE07A5F)
+
+        private const val TAG = "SketchlyWidget"
     }
 
     // Responsive mode — Glance picks the best size from the set
@@ -118,7 +122,26 @@ class SketchlyWidget : GlanceAppWidget() {
     @Composable
     private fun HasSketchLayout(state: SketchlyWidgetState.HasSketch, isWide: Boolean) {
         val bitmapFile = File(state.bitmapFilePath)
-        val bitmap = if (bitmapFile.exists()) BitmapFactory.decodeFile(bitmapFile.absolutePath) else null
+        val bitmap: Bitmap? = if (bitmapFile.exists()) {
+            // Decode with a safety guard: if the file on disk is larger than expected
+            // (e.g. left over from a previous install that used BITMAP_SIZE_PX=512),
+            // sample down to inSampleSize=2 so the decoded bitmap stays below the
+            // ~1 MB Android Binder IPC limit for setImageViewBitmap().
+            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(bitmapFile.absolutePath, opts)
+            val rawPixels = opts.outWidth.toLong() * opts.outHeight
+            val safeOpts = BitmapFactory.Options().apply {
+                // Each pixel is 4 bytes (ARGB_8888).  Keep total <= 512 KB to
+                // leave headroom for the rest of the RemoteViews transaction.
+                inSampleSize = if (rawPixels * 4 > 524_288L) 2 else 1
+            }
+            BitmapFactory.decodeFile(bitmapFile.absolutePath, safeOpts).also { bmp ->
+                if (bmp != null) {
+                    Log.d(TAG, "[Widget] bitmap loaded ${bmp.width}×${bmp.height} "
+                        + "rawBytes=${bmp.byteCount} inSampleSize=${safeOpts.inSampleSize}")
+                }
+            }
+        } else null
 
         Box(
             modifier = GlanceModifier

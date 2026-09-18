@@ -49,6 +49,7 @@ import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import android.widget.Toast
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.jrprofessor.sketchly.BuildConfig
 import com.jrprofessor.sketchly.data.worker.ContactSyncWorker
 import com.jrprofessor.sketchly.ui.components.SketchlyTopBar
 import com.jrprofessor.sketchly.ui.theme.AppNameColor
@@ -78,6 +79,7 @@ private fun SettingsScreenPreview() {
             onContactSyncChange = {},
             onSyncNow = {},
             isSyncing = false,
+            isWidgetPinned = true,
             onBack = {},
             onNavigateToEditProfile = {},
             onSignOut = {},
@@ -97,6 +99,14 @@ fun SettingsScreen(
     val context = LocalContext.current
     val firestoreUser by viewModel.firestoreUser.collectAsStateWithLifecycle()
     val isSyncEnabledInVm by viewModel.isContactSyncEnabled.collectAsStateWithLifecycle()
+    val isWidgetPinned by viewModel.isWidgetPinned.collectAsStateWithLifecycle()
+
+    // Refresh widget pin status every time this screen is shown (DEBUG builds only).
+    // This ensures the badge reflects reality after the user returns from the
+    // home screen where they may have just pinned/removed the widget.
+    LaunchedEffect(Unit) {
+        viewModel.refreshWidgetPinStatus()
+    }
 
     var showDoodlePreview by remember { mutableStateOf(true) }
     var notifyNewScribbles by remember { mutableStateOf(true) }
@@ -167,6 +177,7 @@ fun SettingsScreen(
         notifyReactions = notifyReactions,
         contactSync = contactSync,
         isSyncing = isSyncing,
+        isWidgetPinned = isWidgetPinned,
         onShowDoodlePreviewChange = { showDoodlePreview = it },
         onNotifyNewScribblesChange = { notifyNewScribbles = it },
         onNotifyReactionsChange = { notifyReactions = it },
@@ -187,6 +198,7 @@ private fun SettingsScreenContent(
     notifyReactions: Boolean,
     contactSync: Boolean,
     isSyncing: Boolean = false,
+    isWidgetPinned: Boolean = false,
     onShowDoodlePreviewChange: (Boolean) -> Unit,
     onNotifyNewScribblesChange: (Boolean) -> Unit,
     onNotifyReactionsChange: (Boolean) -> Unit,
@@ -228,7 +240,41 @@ private fun SettingsScreenContent(
             onCheckedChange = onShowDoodlePreviewChange,
         )
 
-        RowDivider()
+        // ── DEBUG ONLY: Widget pin status row ────────────────────────────────────
+        // Visible in debug builds only — R8 eliminates this entire branch in
+        // release APKs.  Use it to confirm widget pin status during manual QA
+        // without relying on logcat.
+        // ─────────────────────────────────────────────────────────────────────────
+        if (BuildConfig.DEBUG) {
+            RowDivider()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column {
+                    Text(
+                        text = "🚧 DEBUG — Widget status",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 11.sp,
+                        ),
+                        color = ButtonGold.copy(alpha = 0.75f),
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = if (isWidgetPinned) "Pinned ✅" else "Not added ❌",
+                        style = MaterialTheme.typography.bodyLarge.copy(
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 15.sp,
+                        ),
+                        color = AppNameColor,
+                    )
+                }
+            }
+        }
 
         Spacer(modifier = Modifier.height(16.dp))
 
