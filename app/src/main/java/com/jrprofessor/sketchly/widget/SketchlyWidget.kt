@@ -1,6 +1,7 @@
 package com.jrprofessor.sketchly.widget
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
@@ -73,6 +74,9 @@ class SketchlyWidget : GlanceAppWidget() {
         private val AccentOrange = Color(0xFFE07A5F)
 
         private const val TAG = "SketchlyWidget"
+
+        /** Intent extra key used to deep-link from widget tap → ViewerScreen. */
+        const val EXTRA_SKETCH_ID = "extra_sketch_id"
     }
 
     // Responsive mode — Glance picks the best size from the set
@@ -142,6 +146,14 @@ class SketchlyWidget : GlanceAppWidget() {
                 }
             }
         } else null
+
+        // Store the sketchId in SharedPreferences so MainActivity can read it
+        // when the Activity is launched/resumed by the widget tap.
+        // Glance 1.1.1 does not support passing Intent extras via actionStartActivity;
+        // SharedPreferences is the recommended lightweight IPC channel for this case.
+        val sharedPrefs: SharedPreferences = LocalContext.current
+            .getSharedPreferences("widget_deeplink", Context.MODE_PRIVATE)
+        sharedPrefs.edit().putString(EXTRA_SKETCH_ID, state.sketchId).apply()
 
         Box(
             modifier = GlanceModifier

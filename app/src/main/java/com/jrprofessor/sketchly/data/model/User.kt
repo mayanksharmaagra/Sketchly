@@ -34,7 +34,9 @@ data class User(
     val phoneNumberHash: String = "",
 
     // ── Discovery ─────────────────────────────────────────────────────
-    val isSearchable: Boolean = true,
+    @get:com.google.firebase.firestore.PropertyName("isSearchable")
+    @set:com.google.firebase.firestore.PropertyName("isSearchable")
+    var isSearchable: Boolean = true,
 
     // ── Auth ──────────────────────────────────────────────────────────
     val authProvider: String = "phone",  // "phone" | "email" (V2)

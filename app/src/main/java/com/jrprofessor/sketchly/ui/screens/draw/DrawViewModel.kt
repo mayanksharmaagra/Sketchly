@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -128,7 +129,7 @@ class DrawViewModel @Inject constructor(
                         .distinctBy { it.userId }
                         .filter { it.userId !in blocked }
                     ContactGroups(yourContacts = all)
-                }
+                }.distinctUntilChanged()
             } else {
                 flowOf(ContactGroups())
             }
@@ -151,7 +152,7 @@ class DrawViewModel @Inject constructor(
                         .distinctBy { it.userId }
                         .filter { it.userId !in blocked }
                         .map { it.toContactEntity(user.uid) }
-                }
+                }.distinctUntilChanged()
             } else {
                 flowOf(emptyList())
             }

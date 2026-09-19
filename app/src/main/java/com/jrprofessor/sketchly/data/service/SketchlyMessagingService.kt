@@ -10,6 +10,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
@@ -304,7 +305,14 @@ class SketchlyMessagingService : FirebaseMessagingService() {
             .setInputData(workDataOf(WidgetUpdateWorker.KEY_SKETCH_ID to sketchId))
             .build()
 
-        WorkManager.getInstance(applicationContext).enqueue(request)
+        // KEEP: if a worker for this sketch is already enqueued/running, don't add another.
+        // Different sketch IDs get separate unique names so they still run in parallel.
+        WorkManager.getInstance(applicationContext)
+            .enqueueUniqueWork(
+                "widget_update_$sketchId",
+                ExistingWorkPolicy.KEEP,
+                request,
+            )
         Log.d(TAG, "WidgetUpdateWorker enqueued for sketch $sketchId")
     }
 
