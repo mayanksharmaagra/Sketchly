@@ -9,6 +9,7 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.SetOptions
@@ -46,6 +47,7 @@ class SketchlyRepository @Inject constructor(
     @param:dagger.hilt.android.qualifiers.ApplicationContext private val appContext: Context,
     private val sketchDao: SketchlyDao,
     private val firestore: FirebaseFirestore,
+    private val auth: FirebaseAuth,
     private val workManager: WorkManager,
 ) {
     private val gson = Gson()
@@ -141,8 +143,12 @@ class SketchlyRepository @Inject constructor(
             if (doc.exists()) {
                 Log.d("SketchlyRepository", "getSketchById($id) → Firestore hit, inserting to Room")
                 val entity = docToEntity(doc.data ?: emptyMap(), id)
-                sketchDao.insert(entity)
-                entityToDomain(entity)
+                // Preserve the existing isRead state so a Firestore cache-miss never
+                // resets a sketch the user already opened back to unread.
+                val alreadyRead = sketchDao.getById(id)?.isRead
+                    ?: fetchReadReceipt(id)   // fresh install: check Firestore receipt
+                sketchDao.insert(entity.copy(isRead = alreadyRead))
+                entityToDomain(entity.copy(isRead = alreadyRead))
             } else {
                 Log.w("SketchlyRepository", "getSketchById($id) → Firestore doc does not exist")
                 null
@@ -278,7 +284,22 @@ class SketchlyRepository @Inject constructor(
 
                         val existing = sketchDao.getById(id)
                         if (existing == null) {
-                            sketchDao.insert(entity.copy(isSent = false, isRead = false))
+                            // Truly new sketch — check Firestore for a persisted read receipt
+                            // (covers reinstall scenario where Room is empty but user already
+                            // opened this sketch on a previous install).
+                            val alreadyRead = fetchReadReceipt(id)
+                            sketchDao.insert(entity.copy(isSent = false, isRead = alreadyRead))
+                        } else {
+                            // Sketch already exists locally — update Firestore-originated fields
+                            // but PRESERVE the local isRead flag so a re-login / re-attach
+                            // of the snapshot listener never resets already-read sketches.
+                            sketchDao.insert(
+                                entity.copy(
+                                    isSent = existing.isSent,
+                                    isRead = existing.isRead,
+                                    isDraft = existing.isDraft,
+                                )
+                            )
                         }
                     }
                 }
@@ -291,7 +312,37 @@ class SketchlyRepository @Inject constructor(
     }
 
     suspend fun markAsRead(id: String) {
+        // 1. Update Room immediately for instant UI response.
         sketchDao.markAsRead(id)
+        // 2. Persist the read receipt to Firestore so it survives reinstalls.
+        //    Written to scribbles/{id}/readBy/{uid} — non-fatal if it fails.
+        val uid = auth.currentUser?.uid ?: return
+        try {
+            firestore.collection("scribbles").document(id)
+                .collection("readBy").document(uid)
+                .set(mapOf("readAt" to System.currentTimeMillis()), SetOptions.merge())
+                .await()
+        } catch (e: Exception) {
+            Log.w("SketchlyRepository", "markAsRead: failed to write Firestore receipt (non-fatal)", e)
+        }
+    }
+
+    /**
+     * Checks whether the current user has a read receipt for [sketchId] in Firestore.
+     * Used on fresh install (Room empty) to restore isRead state without forcing the
+     * user to re-open sketches they already saw on a previous install.
+     * Returns false on any error so the sketch safely defaults to unread.
+     */
+    private suspend fun fetchReadReceipt(sketchId: String): Boolean {
+        val uid = auth.currentUser?.uid ?: return false
+        return try {
+            firestore.collection("scribbles").document(sketchId)
+                .collection("readBy").document(uid)
+                .get().await().exists()
+        } catch (e: Exception) {
+            Log.w("SketchlyRepository", "fetchReadReceipt($sketchId): failed (non-fatal)", e)
+            false
+        }
     }
 
     // ── Reactions — Live Listener (SRS FR-7.3) ──

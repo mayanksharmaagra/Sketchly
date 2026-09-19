@@ -87,8 +87,9 @@ object AppModule {
         @ApplicationContext context: Context,
         sketchDao: SketchlyDao,
         firestore: FirebaseFirestore,
+        auth: FirebaseAuth,
         workManager: WorkManager,
-    ): SketchlyRepository = SketchlyRepository(context, sketchDao, firestore, workManager)
+    ): SketchlyRepository = SketchlyRepository(context, sketchDao, firestore, auth, workManager)
 
     @Provides
     @Singleton

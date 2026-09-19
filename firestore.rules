@@ -49,6 +49,19 @@ service cloud.firestore {
 
       // No update/delete for sent Scribbles in MVP (BR-1, BR-2 handled app-side)
       allow update, delete: if false;
+
+      // ── Read Receipts — scribbles/{id}/readBy/{userId} ──
+      // Each recipient writes only their own read receipt.
+      // The sender can read all receipts (useful for future "seen by" indicator).
+      match /readBy/{readerId} {
+        allow read: if isSignedIn() && (
+          isOwner(readerId) ||
+          request.auth.uid == get(/databases/$(database)/documents/scribbles/$(scribbleId)).data.senderId
+        );
+        allow create, update: if isSignedIn() && isOwner(readerId) &&
+          request.resource.data.readAt is int;
+        allow delete: if false;
+      }
     }
 
     // ── Reactions (SRS §7, FR-7) ──
